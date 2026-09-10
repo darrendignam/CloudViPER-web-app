@@ -1,0 +1,20 @@
+# Secrets. The Dockerfile copies all of web-app/src, which includes src/.env on
+# a developer's machine. CI never sees it because it is gitignored, so a locally
+# built image would differ from the published one by having credentials in it.
+**/.env
+**/.env.*
+
+# Rebuilt inside the image by `npm run build`
+**/node_modules
+web-app/dist
+
+# Not part of the application
+.git
+.github
+docs
+Documentation
+reports
+image-security
+k8s-aws
+*.png
+*.md

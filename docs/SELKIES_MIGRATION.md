@@ -383,7 +383,7 @@ Sizes: 🟢 small (<½ day), 🟡 medium (½-2 days), 🔴 large (multi-day).
 
 ### Proxy
 - [x] 🟡 `/service/auth/instance/:instanceUUID` implemented, status-only, denies on lookup failure
-- [ ] 🟡 Wire `auth_request` to it in the nginx-proxy config. **The endpoint exists but nothing calls it yet.**
+- [x] 🔴 **Decided 2026-09-10: `auth_request` stays unwired.** The session cookie is host-only for the app domain, so a subrequest for `<uuid>.<domain>` carries no cookie and the endpoint would deny every desktop, including the owner's. Making it work needs `domain: '.<domain>'` on the session cookie, which sends that cookie into every instance container, where users have a shell. That is a worse position than the per-desktop Selkies token it was meant to strengthen. Revisit with a per-instance signed cookie set on the instance host at launch, not with the session cookie.
 - [ ] 🟢 Point the upstream at container port 3000
 - [ ] 🟢 Add the `notoken` log format at the edge
 - [x] 🟢 `Referrer-Policy: no-referrer` sent by the launch route

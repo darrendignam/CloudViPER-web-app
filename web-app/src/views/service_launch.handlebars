@@ -30,27 +30,41 @@
         // A load event only says a document arrived. A proxy 502 while the
         // container starts, or a Selkies close for a bad token, both load a
         // document, so the frame would report Connected over a blank screen.
-        // Ask the instance directly instead.
-        function confirmReachable(instanceUrl) {
-            var origin = new URL(instanceUrl).origin;
+        //
+        // The instance cannot be probed from here: it is a different origin, so
+        // the request would have to be no-cors, and an opaque response resolves
+        // on a 502 exactly as it does on a 200. The app probes it server side
+        // instead and this endpoint, being same-origin, can be read properly.
+        function confirmReachable() {
             var deadline = Date.now() + 120000;
 
             (function poll() {
                 if (settled) return;
 
-                fetch(origin + '/favicon.ico', { mode: 'no-cors', cache: 'no-store' })
-                    .then(function () {
+                fetch('/service/launch/' + encodeURIComponent(uuid) + '/ready', {
+                    credentials: 'same-origin',
+                    cache: 'no-store'
+                }).then(function (response) {
+                    return response.ok ? response.json() : { reachable: false };
+                }).catch(function () {
+                    return { reachable: false };
+                }).then(function (body) {
+                    if (settled) return;
+
+                    if (body.reachable) {
                         settled = true;
                         status.textContent = 'Connected';
                         status.classList.add('is-connected');
-                    })
-                    .catch(function () {
-                        if (Date.now() > deadline) {
-                            fail('The desktop is not responding');
-                            return;
-                        }
-                        window.setTimeout(poll, 2000);
-                    });
+                        return;
+                    }
+
+                    if (Date.now() > deadline) {
+                        fail('The desktop is not responding');
+                        return;
+                    }
+
+                    window.setTimeout(poll, 2000);
+                });
             })();
         }
 
@@ -68,7 +82,7 @@
         }).then(function (body) {
             status.textContent = body.role === 'viewer' ? 'Connecting, view only' : 'Connecting';
             frame.src = body.url;
-            confirmReachable(body.url);
+            confirmReachable();
         }).catch(function (error) {
             fail(error.message);
         });

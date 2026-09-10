@@ -148,7 +148,9 @@ describe('Service launch and proxy auth routes', () => {
                 .post('/service/launch/inst123abc45/token')
                 .expect(200);
 
-            expect(mockService.grantInstanceAccess).toHaveBeenCalledWith(INSTANCE, 'controller');
+            // The user id is recorded on the token so logout can withdraw this user's
+            // access without disturbing anyone else watching the same desktop.
+            expect(mockService.grantInstanceAccess).toHaveBeenCalledWith(INSTANCE, 'controller', OWNER.id);
             expect(response.body.url).toBe('http://inst123abc45.example.org/?token=minted-session-token');
             expect(response.body.role).toBe('controller');
         });
@@ -161,7 +163,7 @@ describe('Service launch and proxy auth routes', () => {
                 .post('/service/launch/inst123abc45/token')
                 .expect(200);
 
-            expect(mockService.grantInstanceAccess).toHaveBeenCalledWith(INSTANCE, 'viewer');
+            expect(mockService.grantInstanceAccess).toHaveBeenCalledWith(INSTANCE, 'viewer', leader.id);
             expect(response.body.role).toBe('viewer');
         });
 

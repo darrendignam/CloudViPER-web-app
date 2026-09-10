@@ -1,13 +1,15 @@
+import { Op } from 'sequelize';
 import db from '../models';
 import { INSTANCE_CREDENTIAL_ATTRIBUTES } from '../models/viperinstance';
 import helperFunctions from '../utility/helperFunctions';
 import { readIntEnv } from '../utility/envConfig';
-import { getAvailablePort } from '../utility/portManager';
+import { redactContainerInspect } from '../utility/redaction';
+import { getMultipleAvailablePorts } from '../utility/portManager';
 import { appLogger } from '../config/logger';
 import { UserRole } from '../types/UserRole';
 import { readAndProcessScript, validateRequiredScripts } from '../utility/scriptManager';
 import containerService from './ContainerService';
-import selkiesControlPlane, { SelkiesRole } from './SelkiesControlPlane';
+import selkiesControlPlane, { SelkiesRole, SELKIES_CONTROL_PORT } from './SelkiesControlPlane';
 
 
 const DOMAIN_NAME = process.env.DOMAIN_NAME || 'cloudviper.org';
@@ -15,6 +17,10 @@ const DOMAIN_NAME = process.env.DOMAIN_NAME || 'cloudviper.org';
 // no database row requires it, so a stray or hostile id cannot reach the
 // orchestrator's own container, MySQL, or anything else on the host.
 export const CLOUDVIPER_INSTANCE_LABEL = 'org.openpreservation.cloudviper.instance';
+
+// Derived from the same setting the control plane client dials, so the two
+// cannot drift: a published port that nothing connects to is silent.
+const SELKIES_CONTROL_PORT_SPEC = `${SELKIES_CONTROL_PORT}/tcp`;
 
 const VIPER_IMAGE = process.env.VIPER_IMAGE || 'ghcr.io/darrendignam/opf-cloud-viper:2.0.0-alpha';
 const TEST_CORPUS_HOST_PATH = process.env.TEST_CORPUS_HOST_PATH
@@ -70,27 +76,6 @@ function controlPlaneTarget(instance: any) {
   return devControlPort
     ? { host: '127.0.0.1', masterToken: instance.masterToken, port: devControlPort }
     : { host: instance.name, masterToken: instance.masterToken };
-}
-
-// Docker's inspect output carries the container's full environment, which holds
-// SELKIES_MASTER_TOKEN. That token mints desktop access through the control
-// plane, so the values are replaced with a marker before the payload is
-// serialised anywhere. Variable names are kept, since they are useful and not
-// sensitive.
-function redactContainerEnvironment(dockerInspect: any): any {
-  const environment = dockerInspect?.Config?.Env;
-
-  if (!Array.isArray(environment)) {
-    return dockerInspect;
-  }
-
-  return {
-    ...dockerInspect,
-    Config: {
-      ...dockerInspect.Config,
-      Env: environment.map((entry: string) => `${String(entry).split('=')[0]}=[redacted]`)
-    }
-  };
 }
 
 /**
@@ -149,12 +134,16 @@ class ViperInstanceService {
     try {
       // Find an available port for development, production uses reverse proxy
       const isDev = process.env.NODE_ENV === 'dev';
-      const availablePort = isDev ? await getAvailablePort(3010) : 3000;
       // In development the app runs on the host, so the container name does not
       // resolve and the control plane has to be reachable through a published
-      // port like the web port. Never published in production.
-      const devControlPort = isDev ? await getAvailablePort(availablePort + 1) : undefined;
-      const devPorts = isDev ? { web: availablePort, control: devControlPort! } : null;
+      // port, as the web port already is. Never published in production.
+      //
+      // The control port binds the loopback address only. Docker defaults to
+      // 0.0.0.0 and its iptables rules bypass a host firewall, which on a shared
+      // network would offer /tokens to anyone who can reach the machine.
+      // controlPlaneTarget dials 127.0.0.1 and nothing else.
+      const [webPort, devControlPort] = isDev ? await getMultipleAvailablePorts(2, 3010) : [3000, undefined];
+      const devPorts = isDev ? { web: webPort, control: devControlPort! } : null;
 
       const containerOptions: any = {
         Image: VIPER_IMAGE,
@@ -163,13 +152,13 @@ class ViperInstanceService {
           ShmSize: 1024 * 1024 * 1024,
           Binds: [`${TEST_CORPUS_HOST_PATH}:/config/test-corpus:ro`],
           ...(isDev && { PortBindings: {
-            '3000/tcp': [{ HostPort: `${availablePort}` }],
+            '3000/tcp': [{ HostPort: `${webPort}` }],
             '3001/tcp': [], // Empty binding to prevent null value
-            '8083/tcp': [{ HostPort: `${devControlPort}` }]
+            [SELKIES_CONTROL_PORT_SPEC]: [{ HostIp: '127.0.0.1', HostPort: `${devControlPort}` }]
           } })
         },
         Labels: { [CLOUDVIPER_INSTANCE_LABEL]: instanceUUID },
-        ExposedPorts: { '3000/tcp': {}, ...(isDev && { '8083/tcp': {} }) },
+        ExposedPorts: { '3000/tcp': {}, ...(isDev && { [SELKIES_CONTROL_PORT_SPEC]: {} }) },
         NetworkingConfig: {
           EndpointsConfig: {
             'cloud-viper-net': {},
@@ -625,7 +614,7 @@ class ViperInstanceService {
 
       // Get container info from Docker
       const container = containerService.getContainer(dockerId);
-      const dockerInspect = redactContainerEnvironment(await container.inspect());
+      const dockerInspect = redactContainerInspect(await container.inspect());
 
       // Calculate operational hours
       const createdAt = instance.createdAt ? new Date(instance.createdAt) : new Date();
@@ -649,14 +638,15 @@ class ViperInstanceService {
   }
 
   /**
-   * Terminates a Viper instance
+   * Mint a fresh Selkies session token and add it to the instance's live set.
+   *
+   * Tokens accumulate rather than replace: a team leader looking in must not
+   * eject the owner mid-session. Earlier links therefore keep working until they
+   * age out after SESSION_TOKEN_TTL_MS or are pushed past
+   * MAX_ACTIVE_SESSION_TOKENS. Relaunching does not revoke anything; only
+   * revokeInstanceAccess does.
    */
-  /**
-   * Mint a fresh Selkies session token and register it as the instance's only
-   * valid credential. Any previously issued link stops working, so relaunching
-   * revokes the old one by construction.
-   */
-  async grantInstanceAccess(instance: any, role: SelkiesRole = 'controller'): Promise<string> {
+  async grantInstanceAccess(instance: any, role: SelkiesRole = 'controller', userId?: number): Promise<string> {
     if (!instance.masterToken) {
       throw new Error('Instance has no master token - it predates Selkies support and must be recreated');
     }
@@ -664,7 +654,16 @@ class ViperInstanceService {
     const sessionToken = helperFunctions.generateSessionToken();
     const issued = {
       ...prunedSessionTokens(instance.sessionTokens),
-      [sessionToken]: { role, slot: null, mk_control: false, issuedAt: new Date().toISOString() }
+      [sessionToken]: {
+        role,
+        slot: null,
+        mk_control: false,
+        issuedAt: new Date().toISOString(),
+        // Recorded so logout can drop this user's tokens without disturbing
+        // anyone else's. Without it the only options are revoking everything,
+        // which ejects an observing team leader, or revoking nothing.
+        userId: userId ?? null
+      }
     };
 
     // The control plane replaces its entire set, so every still-valid token has
@@ -725,6 +724,76 @@ class ViperInstanceService {
   }
 
   /**
+   * Withdraw one user's desktop credentials without touching their containers.
+   *
+   * Logging out ends access, not work. A long running job keeps going in the
+   * container's X session, which does not depend on anyone watching it; the
+   * user signs back in, launches again, and a fresh token is minted. Stopping
+   * the container here would throw that work away.
+   *
+   * Only this user's tokens go. A team leader watching the same desktop keeps
+   * theirs, which is the same reason grantInstanceAccess adds rather than
+   * replaces.
+   */
+  async revokeUserSessions(userId: number): Promise<number> {
+    if (!userId) {
+      return 0;
+    }
+
+    // Tokens live inside a JSON column, so the holder cannot be expressed as a
+    // WHERE clause portably. The candidate set is every live instance, which is
+    // small: instances are per user and short lived.
+    const instances = await db.ViperInstance.findAll({
+      where: { status: { [Op.ne]: 'deleted' } }
+    });
+
+    let revokedFrom = 0;
+
+    for (const instance of instances) {
+      const tokens = instance.sessionTokens || {};
+      const remaining = Object.fromEntries(
+        Object.entries(tokens).filter(([, permissions]: [string, any]) => permissions?.userId !== userId)
+      );
+
+      if (Object.keys(remaining).length === Object.keys(tokens).length) {
+        continue;
+      }
+
+      try {
+        await selkiesControlPlane.replaceTokens(
+          controlPlaneTarget(instance),
+          toControlPlaneTokenSet(remaining)
+        );
+        await instance.update({ sessionTokens: remaining });
+        revokedFrom += 1;
+      } catch (error) {
+        // The container may be stopped or gone. The row still has to lose the
+        // token, or logging out would leave a credential recorded as live.
+        appLogger.warn('Could not reach container to revoke session on logout', {
+          eventType: 'Logout Revoke Warning',
+          instanceId: instance.id,
+          instanceUUID: instance.uuid,
+          userId,
+          error: (error as Error).message,
+          timestamp: new Date().toISOString()
+        });
+        await instance.update({ sessionTokens: remaining });
+      }
+    }
+
+    if (revokedFrom > 0) {
+      appLogger.info('Desktop sessions revoked on logout', {
+        eventType: 'Logout Sessions Revoked',
+        userId,
+        instanceCount: revokedFrom,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    return revokedFrom;
+  }
+
+  /**
    * Run a command in a container and fail loudly on a non-zero exit.
    * execInContainer resolves with an exitCode that callers routinely ignore, so
    * a permission error or a missing binary otherwise passes for success.
@@ -733,7 +802,8 @@ class ViperInstanceService {
     const { output, exitCode } = await containerService.execInContainer(containerId, command, options);
 
     if (exitCode !== 0) {
-      throw new Error(`Command failed (exit ${exitCode}): ${command.join(' ')} :: ${output.trim()}`);
+      const reason = exitCode < 0 ? 'no exit code reported' : `exit ${exitCode}`;
+      throw new Error(`Command failed (${reason}): ${command.join(' ')} :: ${output.trim()}`);
     }
 
     return output;
@@ -804,6 +874,9 @@ class ViperInstanceService {
     }
   }
 
+  /**
+   * Terminates a Viper instance
+   */
   async terminateInstance(containerId: string, user: ServiceUser): Promise<any> {
     try {
       // Get instance from database
@@ -865,9 +938,14 @@ class ViperInstanceService {
 
       await this.revokeInstanceAccess(instance);
 
-      await this.removeContainer(containerId, instance.id);
+      const removed = await this.removeContainer(containerId, instance.id);
 
-      return { success: true, message: 'Instance terminated successfully' };
+      // The row is already marked deleted, so a container Docker refused to
+      // remove is invisible to the orphan reclaim path: findOne still returns a
+      // row. Saying so here is the only chance the caller gets to notice.
+      return removed
+        ? { success: true, message: 'Instance terminated successfully' }
+        : { success: false, message: 'Instance marked terminated, but its container could not be removed' };
     } catch (error) {
       appLogger.error('Error terminating instance', {
         eventType: 'Instance Termination Error',

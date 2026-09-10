@@ -30,7 +30,8 @@ jest.mock('../../../utility/helperFunctions', () => ({
 }));
 
 jest.mock('../../../utility/portManager', () => ({
-    getAvailablePort: jest.fn()
+    getAvailablePort: jest.fn(),
+    getMultipleAvailablePorts: jest.fn()
 }));
 
 jest.mock('../../../models', () => ({
@@ -174,6 +175,7 @@ describe('Service Routes', () => {
     const setupCommonMocks = () => {
         mockedHelperFunctions.generateRandomString.mockReturnValue('mock-random-string');
         mockedPortManager.getAvailablePort.mockResolvedValue(3001);
+        mockedPortManager.getMultipleAvailablePorts.mockResolvedValue([3010, 3011]);
         
         // Mock database models with default implementations
         (db.ViperInstance.create as jest.Mock).mockResolvedValue(createMockViperInstance());
@@ -374,7 +376,23 @@ describe('Service Routes', () => {
         });
     });
 
-    describe('GET /new-instance', () => {
+    // SameSite 'lax' sends the session cookie on top-level GET navigation, so a
+    // state-changing route reachable by GET can be driven from a third party
+    // page with an <img> or a link. Both of these create or destroy containers.
+    describe('CSRF surface', () => {
+        it.each([
+            '/service/new-instance',
+            '/service/terminate-instance/test-container-id'
+        ])('should not expose %s over GET', async (endpoint) => {
+            const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
+
+            const response = await request(testApp).get(endpoint);
+
+            expect(response.status).toBe(404);
+        });
+    });
+
+    describe('POST /new-instance', () => {
         beforeEach(() => {
             // Mock ViperInstance creation
             (db.ViperInstance.create as jest.Mock).mockResolvedValue({
@@ -394,7 +412,7 @@ describe('Service Routes', () => {
         it('should create new instance for admin user', async () => {
             const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
 
-            const response = await request(testApp).get('/service/new-instance');
+            const response = await request(testApp).post('/service/new-instance');
             
             expect(response.status).toBe(200);
             expect(response.body).toEqual({
@@ -415,21 +433,21 @@ describe('Service Routes', () => {
 
         it('should create new instance for testing user', async () => {
             const testApp = createTestApp({ id: 2, username: 'tester', email: 'test@test.com', role: UserRole.TESTING });
-            const response = await request(testApp).get('/service/new-instance');
+            const response = await request(testApp).post('/service/new-instance');
             expect(response.status).toBe(200);
             expect(mockDockerInstance.createContainer).toHaveBeenCalled();
         });
 
         it('should create new instance for member user', async () => {
             const testApp = createTestApp({ id: 3, username: 'member', email: 'member@test.com', role: UserRole.MEMBER });
-            const response = await request(testApp).get('/service/new-instance');
+            const response = await request(testApp).post('/service/new-instance');
             expect(response.status).toBe(200);
             expect(mockDockerInstance.createContainer).toHaveBeenCalled();
         });
 
         it('should reject user role', async () => {
             const testApp = createTestApp({ id: 4, username: 'user', email: 'user@test.com', role: UserRole.USER });
-            const response = await request(testApp).get('/service/new-instance');
+            const response = await request(testApp).post('/service/new-instance');
             expect(response.status).toBe(403);
             expect(response.body).toEqual({ "error": "Insufficient permissions" });
             expect(mockDockerInstance.createContainer).not.toHaveBeenCalled();
@@ -437,7 +455,7 @@ describe('Service Routes', () => {
 
         it('should reject unauthenticated users', async () => {
             const testApp = createTestApp(); // No user
-            const response = await request(testApp).get('/service/new-instance');
+            const response = await request(testApp).post('/service/new-instance');
             expect(response.status).toBe(403);
             expect(response.body).toEqual({ "error": "Insufficient permissions" });
         });
@@ -451,7 +469,7 @@ describe('Service Routes', () => {
             // Mock Log creation
             (db.Log.create as jest.Mock).mockResolvedValue({});
 
-            const response = await request(testApp).get('/service/new-instance');
+            const response = await request(testApp).post('/service/new-instance');
             
             expect(response.status).toBe(500);
             expect(response.body).toEqual({ 
@@ -624,7 +642,7 @@ describe('Service Routes', () => {
         });
     });
 
-    describe('GET /terminate-instance/:containerId', () => {
+    describe('POST /terminate-instance/:containerId', () => {
         let mockInstanceRow: any;
 
         beforeEach(() => {
@@ -646,7 +664,7 @@ describe('Service Routes', () => {
         it('should successfully terminate container', async () => {
             const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
 
-            const response = await request(testApp).get('/service/terminate-instance/test-container-id');
+            const response = await request(testApp).post('/service/terminate-instance/test-container-id');
 
             expect(response.status).toBe(200);
             expect(response.body).toEqual({
@@ -661,7 +679,7 @@ describe('Service Routes', () => {
         it('should soft delete the row rather than destroying it', async () => {
             const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
 
-            await request(testApp).get('/service/terminate-instance/test-container-id');
+            await request(testApp).post('/service/terminate-instance/test-container-id');
 
             expect(mockInstanceRow.update).toHaveBeenCalledWith(
                 expect.objectContaining({ status: 'deleted' })
@@ -672,27 +690,32 @@ describe('Service Routes', () => {
             mockContainer.stop.mockRejectedValue(new Error('No such container'));
 
             const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
-            const response = await request(testApp).get('/service/terminate-instance/test-container-id');
+            const response = await request(testApp).post('/service/terminate-instance/test-container-id');
 
             expect(response.status).toBe(200);
             expect(response.body.success).toBe(true);
         }, 10000);
 
-        it('should still report success when removal fails', async () => {
+        // Distinct from the case above: there, stop failed but the container was
+        // removed, so termination did what it promised. Here the container is
+        // still running while the row is already marked deleted, which hides it
+        // from the orphan reclaim path. Reporting success would strand it.
+        it('should report failure when the container could not be removed', async () => {
             mockContainer.remove.mockRejectedValue(new Error('Remove failed'));
 
             const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
-            const response = await request(testApp).get('/service/terminate-instance/test-container-id');
+            const response = await request(testApp).post('/service/terminate-instance/test-container-id');
 
-            expect(response.status).toBe(200);
-            expect(response.body.success).toBe(true);
+            expect(response.status).toBe(500);
+            expect(response.body.success).toBe(false);
+            expect(response.body.error).toMatch(/could not be removed/i);
         }, 10000);
 
         it('should tear down an orphaned container for an admin', async () => {
             (db.ViperInstance.findOne as jest.Mock).mockResolvedValue(null);
 
             const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
-            const response = await request(testApp).get('/service/terminate-instance/test-container-id');
+            const response = await request(testApp).post('/service/terminate-instance/test-container-id');
 
             expect(response.status).toBe(200);
             expect(response.body.message).toBe('Orphaned container removed');
@@ -707,7 +730,7 @@ describe('Service Routes', () => {
             mockContainer.inspect.mockResolvedValue({ Config: { Image: 'mysql:8.0', Labels: {} } });
 
             const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
-            const response = await request(testApp).get('/service/terminate-instance/cloud-viper-mysqldb');
+            const response = await request(testApp).post('/service/terminate-instance/cloud-viper-mysqldb');
 
             expect(response.status).toBe(404);
             expect(mockContainer.remove).not.toHaveBeenCalled();
@@ -718,7 +741,7 @@ describe('Service Routes', () => {
             mockContainer.inspect.mockRejectedValue(new Error('no such container'));
 
             const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
-            const response = await request(testApp).get('/service/terminate-instance/deadbeef1234');
+            const response = await request(testApp).post('/service/terminate-instance/deadbeef1234');
 
             expect(response.status).toBe(404);
             expect(mockContainer.remove).not.toHaveBeenCalled();
@@ -728,7 +751,7 @@ describe('Service Routes', () => {
             mockContainer.stop.mockRejectedValue(new Error('container already stopped'));
 
             const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
-            await request(testApp).get('/service/terminate-instance/test-container-id');
+            await request(testApp).post('/service/terminate-instance/test-container-id');
 
             // An exited container is exactly the state orphan teardown exists for,
             // and Docker rejects stop on one.
@@ -739,7 +762,7 @@ describe('Service Routes', () => {
             (db.ViperInstance.findOne as jest.Mock).mockResolvedValue(null);
 
             const testApp = createTestApp({ id: 2, username: 'member', email: 'member@test.com', role: UserRole.MEMBER });
-            const response = await request(testApp).get('/service/terminate-instance/test-container-id');
+            const response = await request(testApp).post('/service/terminate-instance/test-container-id');
 
             expect(response.status).toBe(404);
             expect(mockContainer.remove).not.toHaveBeenCalled();
@@ -747,7 +770,7 @@ describe('Service Routes', () => {
 
         it('should reject a non-owner with 403 and leave the container running', async () => {
             const testApp = createTestApp({ id: 99, username: 'other', email: 'other@test.com', role: UserRole.MEMBER });
-            const response = await request(testApp).get('/service/terminate-instance/test-container-id');
+            const response = await request(testApp).post('/service/terminate-instance/test-container-id');
 
             expect(response.status).toBe(403);
             expect(mockContainer.remove).not.toHaveBeenCalled();
@@ -757,7 +780,7 @@ describe('Service Routes', () => {
             (db.ViperInstance.findOne as jest.Mock).mockRejectedValue(new Error('Database error'));
 
             const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
-            const response = await request(testApp).get('/service/terminate-instance/test-container-id');
+            const response = await request(testApp).post('/service/terminate-instance/test-container-id');
 
             expect(response.status).toBe(500);
         }, 10000);
@@ -854,7 +877,7 @@ describe('Service Routes', () => {
 
             (db.ViperInstance.create as jest.Mock).mockResolvedValue({});
 
-            await request(testApp).get('/service/new-instance');
+            await request(testApp).post('/service/new-instance');
 
             expect(mockDockerInstance.createContainer).toHaveBeenCalled();
             if (mockDockerInstance.createContainer.mock.calls.length > 0) {
@@ -874,14 +897,19 @@ describe('Service Routes', () => {
 
             (db.ViperInstance.create as jest.Mock).mockResolvedValue({});
 
-            await request(testApp).get('/service/new-instance');
+            await request(testApp).post('/service/new-instance');
 
             expect(mockDockerInstance.createContainer).toHaveBeenCalled();
-            if (mockDockerInstance.createContainer.mock.calls.length > 0) {
-                const createContainerCall = mockDockerInstance.createContainer.mock.calls[0][0];
-                expect(createContainerCall.HostConfig.PortBindings).toBeDefined();
-                expect(createContainerCall.HostConfig.PortBindings['3000/tcp']).toEqual([{ HostPort: '3001' }]);
-            }
+            const createContainerCall = mockDockerInstance.createContainer.mock.calls[0][0];
+            const portBindings = createContainerCall.HostConfig.PortBindings;
+
+            expect(portBindings).toBeDefined();
+            expect(portBindings['3000/tcp']).toEqual([{ HostPort: '3010' }]);
+
+            // The control plane mints desktop access, and Docker's default
+            // 0.0.0.0 binding bypasses a host firewall via its own iptables
+            // rules, so this one must never leave the loopback address.
+            expect(portBindings['8083/tcp']).toEqual([{ HostIp: '127.0.0.1', HostPort: '3011' }]);
 
             process.env.NODE_ENV = originalEnv;
         });
@@ -1152,12 +1180,12 @@ describe('Service Routes', () => {
                 });
             });
 
-            describe('GET /terminate-instance/:containerId', () => {
+            describe('POST /terminate-instance/:containerId', () => {
                 it('should reject invalid container ID (too short)', async () => {
                     const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
 
                     const response = await request(testApp)
-                        .get('/service/terminate-instance/short');
+                        .post('/service/terminate-instance/short');
 
                     expect(response.status).toBe(400);
                     expect(response.body.error).toBe('Invalid container ID provided');
@@ -1169,7 +1197,7 @@ describe('Service Routes', () => {
                     (db.ViperInstance.findOne as jest.Mock).mockResolvedValue(null);
 
                     const response = await request(testApp)
-                        .get('/service/terminate-instance/valid-container-id');
+                        .post('/service/terminate-instance/valid-container-id');
 
                     expect(response.status).toBe(404);
                     expect(response.body.error).toBe('Instance not found');
@@ -1186,21 +1214,21 @@ describe('Service Routes', () => {
                     (db.ViperInstance.findOne as jest.Mock).mockResolvedValue(mockInstance);
 
                     const response = await request(testApp)
-                        .get('/service/terminate-instance/valid-container-id');
+                        .post('/service/terminate-instance/valid-container-id');
 
                     expect(response.status).toBe(403);
                     expect(response.body.error).toBe('Unauthorized - can only terminate own instances');
                 });
             });
 
-            describe('GET /new-instance - Instance Limits', () => {
+            describe('POST /new-instance - Instance Limits', () => {
             it('should enforce instance limits for testing role', async () => {
                 const testApp = createTestApp({ id: 2, username: 'tester', email: 'test@test.com', role: UserRole.TESTING });
 
                 // Mock that user already has 1 instance (at limit for TESTING role)
                 (db.ViperInstance.count as jest.Mock).mockResolvedValue(1);
 
-                const response = await request(testApp).get('/service/new-instance');
+                const response = await request(testApp).post('/service/new-instance');
 
                 expect(response.status).toBe(429);
                 expect(response.body).toEqual({
@@ -1215,7 +1243,7 @@ describe('Service Routes', () => {
                     // Mock that user already has 1 instance (at limit for MEMBER role)
                     (db.ViperInstance.count as jest.Mock).mockResolvedValue(1);
 
-                    const response = await request(testApp).get('/service/new-instance');
+                    const response = await request(testApp).post('/service/new-instance');
 
                     expect(response.status).toBe(429);
                     expect(response.body).toEqual({
@@ -1233,7 +1261,7 @@ describe('Service Routes', () => {
                     (db.ViperInstance.count as jest.Mock).mockResolvedValue(100);
                     (db.ViperInstance.create as jest.Mock).mockResolvedValue(createMockViperInstance());
 
-                    const response = await request(testApp).get('/service/new-instance');
+                    const response = await request(testApp).post('/service/new-instance');
 
                     expect(response.status).toBe(200);
                     expect(response.body.success).toBe(true);
@@ -1244,7 +1272,7 @@ describe('Service Routes', () => {
 
                     (db.ViperInstance.count as jest.Mock).mockRejectedValue(new Error('Database error'));
 
-                    const response = await request(testApp).get('/service/new-instance');
+                    const response = await request(testApp).post('/service/new-instance');
 
                     expect(response.status).toBe(500);
                     expect(response.body.error).toBe('Database error checking instance limits');

@@ -5,6 +5,7 @@ import { QueryTypes, Op } from 'sequelize';
 import db from '../models';
 import { INSTANCE_CREDENTIAL_ATTRIBUTES } from '../models/viperinstance';
 import { SelkiesRole } from '../services/SelkiesControlPlane';
+import { readIntEnv } from '../utility/envConfig';
 import { appLogger } from '../config/logger';
 import { UserRole } from '../types/UserRole';
 import containerService from '../services/ContainerService';
@@ -12,6 +13,10 @@ import viperInstanceService from '../services/ViperInstanceService';
 
 
 const router = express.Router();
+
+// Short by design: the readiness probe is polled from the launch page while a
+// container starts, so a slow answer is as good as a miss.
+const INSTANCE_PROBE_TIMEOUT_MS = readIntEnv('INSTANCE_PROBE_TIMEOUT_MS', 3000);
 // Using containerService instead of direct Docker instance
 // const docker = new Docker({ socketPath: '/var/run/docker.sock' }); // Keep for compatibility with existing code
 
@@ -328,7 +333,7 @@ router.get('/team-leader', async (req: Request, res: Response) => {
     }
 });
 
-router.get('/new-instance', async (req: Request, res: Response): Promise<void> => {
+router.post('/new-instance', async (req: Request, res: Response): Promise<void> => {
     const user = req.user as ServiceUser | undefined;
     const permissionCheck = checkUserPermission(user, [UserRole.TESTING, UserRole.MEMBER, UserRole.SUBSCRIBER, UserRole.ADMIN]);
 
@@ -600,7 +605,7 @@ router.get('/viperinstances', async (req: Request, res: Response): Promise<void>
     }
 });
 
-router.get('/terminate-instance/:containerId', async (req: Request, res: Response): Promise<void> => {
+router.post('/terminate-instance/:containerId', async (req: Request, res: Response): Promise<void> => {
     const containerID = req.params.containerId;
     const user = req.user as ServiceUser | undefined;
     
@@ -633,6 +638,11 @@ router.get('/terminate-instance/:containerId', async (req: Request, res: Respons
     try {
         // Use ViperInstanceService to terminate the instance
         const result = await viperInstanceService.terminateInstance(containerID, user);
+
+        if (!result.success) {
+            res.status(500).json({ success: false, error: result.message });
+            return;
+        }
 
         res.json({
             success: true,
@@ -725,12 +735,12 @@ async function resolveAccessibleInstance(user: ServiceUser | undefined, instance
 }
 
 /**
- * Open a desktop. Mints a fresh Selkies session token, registers it as the
- * container's only credential, and frames the desktop so the token stays out of
- * the address bar, browser history and any copied URL.
+ * Open a desktop. Mints a fresh Selkies session token and frames the desktop so
+ * the token stays out of the address bar, browser history and any copied URL.
  *
- * Minting displaces any previously issued token, so opening an instance again
- * invalidates the earlier link.
+ * The new token joins the container's live set rather than replacing it, so a
+ * previously issued link keeps working until it ages out. Revocation is an
+ * explicit act: see revokeInstanceAccess.
  */
 router.get('/launch/:instanceUUID', async (req: Request, res: Response): Promise<void> => {
     const user = req.user as ServiceUser | undefined;
@@ -798,7 +808,7 @@ router.post('/launch/:instanceUUID/token', async (req: Request, res: Response): 
             return;
         }
 
-        const sessionToken = await viperInstanceService.grantInstanceAccess(access.instance, access.role);
+        const sessionToken = await viperInstanceService.grantInstanceAccess(access.instance, access.role, user?.id);
 
         res.setHeader('Referrer-Policy', 'no-referrer');
         res.json({
@@ -818,8 +828,81 @@ router.post('/launch/:instanceUUID/token', async (req: Request, res: Response): 
 });
 
 /**
+ * Report whether the desktop is actually serving yet.
+ *
+ * The browser cannot answer this for itself. A cross-origin probe has to be
+ * no-cors, which yields an opaque response that resolves on a 502 as readily as
+ * on a 200, so the page would call a proxy error "Connected". The app can see
+ * the real status, and this endpoint is same-origin, so the page can read it.
+ *
+ * Reachable means the instance answered below 500. A 401 or 403 still proves
+ * the desktop is up; Selkies authenticates over the WebSocket, not here.
+ */
+router.get('/launch/:instanceUUID/ready', async (req: Request, res: Response): Promise<void> => {
+    const user = req.user as ServiceUser | undefined;
+    const { instanceUUID } = req.params;
+
+    let access;
+
+    try {
+        access = await resolveAccessibleInstance(user, instanceUUID);
+    } catch (error) {
+        appLogger.error('Instance readiness check failed', {
+            eventType: 'Instance Probe Error',
+            instanceUUID,
+            userId: user?.id ?? null,
+            error: (error as Error).message,
+            timestamp: new Date().toISOString()
+        });
+        res.status(500).json({ error: 'Could not check this instance' });
+        return;
+    }
+
+    if (!access.instance) {
+        res.status(access.status!).json({ error: access.error });
+        return;
+    }
+
+    try {
+        const response = await fetch(instanceBaseUrl(access.instance), {
+            method: 'GET',
+            redirect: 'manual',
+            signal: AbortSignal.timeout(INSTANCE_PROBE_TIMEOUT_MS)
+        });
+
+        res.json({ reachable: response.status < 500, status: response.status });
+    } catch (error) {
+        // A refused connection or a timeout is the normal answer while the
+        // container is still starting, so this is not logged as an error.
+        appLogger.debug('Instance readiness probe did not connect', {
+            eventType: 'Instance Probe Miss',
+            instanceUUID,
+            error: (error as Error).message,
+            timestamp: new Date().toISOString()
+        });
+        res.json({ reachable: false });
+    }
+});
+
+/**
  * Ownership check for the reverse proxy's auth_request directive. Returns no
  * body: nginx only reads the status. 2xx admits the request, 401 and 403 deny.
+ *
+ * NOT WIRED, deliberately. An instance is served from <uuid>.<domain> while the
+ * session cookie is host-only for the app's own domain, so an auth_request
+ * subrequest for a desktop carries no cookie and this would answer 401 for
+ * everyone, the owner included.
+ *
+ * Making it work needs `domain: '.<domain>'` on the session cookie, which then
+ * sends that cookie to every instance subdomain, which is to say into the ViPER
+ * containers themselves. Users have a shell in there. That trades a Selkies
+ * token scoped to one desktop for a session cookie scoped to the whole account,
+ * which is a worse position than the one this was meant to improve.
+ *
+ * Kept because access control belongs at the proxy eventually, but that needs a
+ * credential that is not the session cookie: a signed per-instance cookie set on
+ * the instance's own host at launch would do it. Until then the Selkies session
+ * token is what guards a desktop.
  */
 router.get('/auth/instance/:instanceUUID', async (req: Request, res: Response): Promise<void> => {
     const user = req.user as ServiceUser | undefined;

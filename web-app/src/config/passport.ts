@@ -18,7 +18,14 @@ export default (passport: PassportStatic) => {
  
     passport.use(new LocalStrategy({ usernameField: options.usernameField }, (username, password, done) => {
         if (process.env.NODE_ENV === 'dev' || process.env.NODE_ENV === 'development') {
-            appLogger.info('LocalStrategy:' + username + ' ' + password, { timestamp: new Date().toISOString() });
+            // Never widen this to include the password. appLogger writes to a
+            // rotated file with 14 day retention that /service/logs/app serves
+            // to admins, so anything logged here outlives the request.
+            appLogger.info('LocalStrategy authentication attempt', {
+                eventType: 'Local Strategy Attempt',
+                username,
+                timestamp: new Date().toISOString()
+            });
         }
         db.User.findOne({ 
             where: { [options.usernameField]: username } ,

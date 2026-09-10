@@ -52,7 +52,9 @@ const INSTANCE_SCOPED_ENDPOINTS = [
     '/service/launch/inst123abc45',
     '/service/screenshot/inst123abc45',
     '/service/screenshots/inst123abc45',
-    '/service/activity/inst123abc45'
+    '/service/activity/inst123abc45',
+    '/service/screenshot-image/inst123abc45',
+    '/service/launch/inst123abc45/ready'
 ];
 
 describe('Instance access control', () => {

@@ -1,5 +1,12 @@
 import Docker from 'dockerode';
 import { appLogger } from '../config/logger';
+import { redactContainerOptions } from '../utility/redaction';
+
+// Returned when Docker never reports a settled exit code. Negative so it can
+// never be mistaken for a real one; every real exit code is 0 or above.
+const UNKNOWN_EXIT_CODE = -1;
+const EXEC_SETTLE_TIMEOUT_MS = 2000;
+const EXEC_SETTLE_POLL_MS = 50;
 
 // Extend the typings to fix the return type of listContainers
 declare module 'dockerode' {
@@ -68,7 +75,7 @@ export class DockerContainerService implements IContainerService {
       appLogger.error('Error creating Docker container', {
         eventType: 'Container Creation Error',
         error: (error as Error).message,
-        options,
+        options: redactContainerOptions(options),
         timestamp: new Date().toISOString()
       });
       throw error;
@@ -149,6 +156,25 @@ export class DockerContainerService implements IContainerService {
     }
   }
 
+  /**
+   * Poll an exec until Docker stops reporting it as running.
+   *
+   * The output stream can end a moment before the daemon settles the exec, and
+   * an inspect in that window returns Running true with a null ExitCode. Reading
+   * that as an exit code turns a failed command into a successful one.
+   */
+  private async awaitExecExit(exec: any): Promise<any> {
+    const deadline = Date.now() + EXEC_SETTLE_TIMEOUT_MS;
+    let inspectData = await exec.inspect();
+
+    while (inspectData?.Running && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, EXEC_SETTLE_POLL_MS));
+      inspectData = await exec.inspect();
+    }
+
+    return inspectData;
+  }
+
   async execInContainer(
     containerId: string,
     command: string[],
@@ -174,8 +200,11 @@ export class DockerContainerService implements IContainerService {
         stream.on('end', resolve);
       });
       
-      const inspectData = await exec.inspect();
-      const exitCode = inspectData.ExitCode || 0;
+      const inspectData = await this.awaitExecExit(exec);
+      // ExitCode is null while the exec is still running, and `|| 0` would read
+      // that as success. UNKNOWN_EXIT_CODE keeps it distinguishable from a
+      // genuine 0 so execChecked can refuse it.
+      const exitCode = inspectData.ExitCode ?? UNKNOWN_EXIT_CODE;
       
       return { output, exitCode };
     } catch (error) {
