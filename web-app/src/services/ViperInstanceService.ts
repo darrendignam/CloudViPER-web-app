@@ -4,6 +4,7 @@ import { QueryTypes } from 'sequelize';
 import db from '../models';
 import { INSTANCE_CREDENTIAL_ATTRIBUTES } from '../models/viperinstance';
 import helperFunctions from '../utility/helperFunctions';
+import { readIntEnv } from '../utility/envConfig';
 import { getAvailablePort } from '../utility/portManager';
 import { appLogger } from '../config/logger';
 import { UserRole } from '../types/UserRole';
@@ -37,7 +38,7 @@ export interface ServiceUser {
 // Session tokens outlive nothing but the container, so they are bounded here
 // rather than accumulating for the life of the instance. A desktop session that
 // has not been reopened within the window is assumed done with.
-const SESSION_TOKEN_TTL_MS = parseInt(process.env.SESSION_TOKEN_TTL_MS || '43200000', 10); // 12h
+const SESSION_TOKEN_TTL_MS = readIntEnv('SESSION_TOKEN_TTL_MS', 12 * 60 * 60 * 1000);
 const MAX_ACTIVE_SESSION_TOKENS = 8;
 
 function prunedSessionTokens(tokens: Record<string, any> | undefined | null): Record<string, any> {

@@ -7,6 +7,7 @@ import db from './models';
 import { logSession, appLogger } from './config/logger';
 
 import configAuth from './config/auth';
+import { readIntEnv } from './utility/envConfig';
 
 import dotenv from 'dotenv';
 dotenv.config({ path: `${__dirname}/.env` });
@@ -14,8 +15,8 @@ dotenv.config({ path: `${__dirname}/.env` });
 console.log(`DB USER: ${process.env.DB_USER}`);
 
 const app: Application = express();
-const PORT: number = parseInt(process.env.PORT || '3000', 10);
-const secure_cookie = (process.env.NODE_ENV === 'production') ? true || false : false;
+const PORT: number = readIntEnv('PORT', 3000);
+const secure_cookie = process.env.NODE_ENV === 'production';
 
 // Log application startup
 appLogger.info('Application starting', {
@@ -216,7 +217,7 @@ app.use(function(req, res ) {
         referer: req.headers['referer'],
         timestamp: new Date().toISOString()
     });
-    res.json({"error":{code:404,status:"not found"}});
+    res.status(404).json({ error: { code: 404, status: 'not found' } });
 });
 
 // Start the server

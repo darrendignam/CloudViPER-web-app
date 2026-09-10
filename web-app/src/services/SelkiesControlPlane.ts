@@ -1,4 +1,5 @@
 import { appLogger } from '../config/logger';
+import { readIntEnv } from '../utility/envConfig';
 
 export type SelkiesRole = 'controller' | 'viewer';
 
@@ -16,8 +17,8 @@ export interface SelkiesTarget {
     port?: number;
 }
 
-export const SELKIES_CONTROL_PORT = parseInt(process.env.SELKIES_CONTROL_PORT || '8083', 10);
-export const SELKIES_CONTROL_TIMEOUT_MS = parseInt(process.env.SELKIES_CONTROL_TIMEOUT_MS || '5000', 10);
+export const SELKIES_CONTROL_PORT = readIntEnv('SELKIES_CONTROL_PORT', 8083);
+export const SELKIES_CONTROL_TIMEOUT_MS = readIntEnv('SELKIES_CONTROL_TIMEOUT_MS', 5000);
 
 /**
  * Raised when the Selkies control plane rejects or fails to answer a request.
