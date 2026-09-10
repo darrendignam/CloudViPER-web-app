@@ -120,6 +120,22 @@ describe('Service launch and proxy auth routes', () => {
             expect(mockService.grantInstanceAccess).not.toHaveBeenCalled();
         });
 
+        it('should allow a team leader on the same real team', async () => {
+            mockDb.User.findByPk.mockResolvedValue({ id: 42, team: 'preservation' });
+            const leader = { ...OWNER, id: 88, role: UserRole.TEAM_LEADER, team: 'preservation' };
+
+            await request(buildApp(leader)).get('/service/launch/inst123abc45').expect(200);
+        });
+
+        it('should not treat the default team "none" as a shared team', async () => {
+            mockDb.User.findByPk.mockResolvedValue({ id: 42, team: 'none' });
+            const teamlessLeader = { ...OWNER, id: 88, role: UserRole.TEAM_LEADER, team: 'none' };
+
+            await request(buildApp(teamlessLeader)).get('/service/launch/inst123abc45').expect(403);
+
+            expect(mockService.grantInstanceAccess).not.toHaveBeenCalled();
+        });
+
         it('should return 404 for an unknown instance', async () => {
             mockDb.ViperInstance.findOne.mockResolvedValue(null);
 

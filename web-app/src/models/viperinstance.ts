@@ -2,6 +2,12 @@
 
 import { Model, DataTypes, Sequelize } from 'sequelize';
 
+// Server-side credentials held on the instance row. masterToken authenticates
+// CloudViPER to the container's Selkies control plane and statusKey authorises
+// the in-container monitor's callbacks, so neither may reach a browser, an
+// admin's included. Excluded from every query whose result is serialised out.
+export const INSTANCE_CREDENTIAL_ATTRIBUTES = ['masterToken', 'statusKey'];
+
 interface ViperInstanceAttributes {
     id?: number;
     owner: number;

@@ -6,6 +6,11 @@ jest.mock('../../../config/logger', () => ({
     logSession: jest.fn()
 }));
 
+jest.mock('../../../services/ContainerService', () => ({
+    __esModule: true,
+    default: { getContainer: jest.fn(), execInContainer: jest.fn(), createContainer: jest.fn() }
+}));
+
 jest.mock('../../../models', () => ({
     ViperInstance: { findOne: jest.fn(), create: jest.fn(), update: jest.fn() },
     User: { findByPk: jest.fn() },
@@ -113,5 +118,59 @@ describe('ViperInstanceService instance access', () => {
 
             expect(controlPlane.revokeAll).not.toHaveBeenCalled();
         });
+    });
+});
+
+describe('ViperInstanceService instance inspection', () => {
+    const db = require('../../../models');
+    const containerService = require('../../../services/ContainerService').default;
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+    });
+
+    it('should never serialise the container environment values', async () => {
+        db.ViperInstance.findOne.mockResolvedValue({ id: 1, uuid: 'abc', createdAt: new Date() });
+        containerService.getContainer.mockReturnValue({
+            inspect: jest.fn().mockResolvedValue({
+                Config: {
+                    Env: [
+                        'SELKIES_MASTER_TOKEN=the-master-token',
+                        'STATUS_KEY=the-status-key',
+                        'PUID=1000'
+                    ]
+                }
+            })
+        });
+
+        const result = await viperInstanceService.inspectInstance('container-1');
+
+        expect(JSON.stringify(result)).not.toContain('the-master-token');
+        expect(JSON.stringify(result)).not.toContain('the-status-key');
+        expect(result.dockerInspect.Config.Env).toEqual([
+            'SELKIES_MASTER_TOKEN=[redacted]',
+            'STATUS_KEY=[redacted]',
+            'PUID=[redacted]'
+        ]);
+    });
+
+    it('should exclude credential columns from the instance row it returns', async () => {
+        db.ViperInstance.findOne.mockResolvedValue({ id: 1, uuid: 'abc', createdAt: new Date() });
+        containerService.getContainer.mockReturnValue({ inspect: jest.fn().mockResolvedValue({}) });
+
+        await viperInstanceService.inspectInstance('container-1');
+
+        expect(db.ViperInstance.findOne).toHaveBeenCalledWith(
+            expect.objectContaining({
+                attributes: { exclude: ['masterToken', 'statusKey'] }
+            })
+        );
+    });
+
+    it('should tolerate an inspect payload with no environment', async () => {
+        db.ViperInstance.findOne.mockResolvedValue({ id: 1, uuid: 'abc', createdAt: new Date() });
+        containerService.getContainer.mockReturnValue({ inspect: jest.fn().mockResolvedValue({ Config: {} }) });
+
+        await expect(viperInstanceService.inspectInstance('container-1')).resolves.toBeDefined();
     });
 });

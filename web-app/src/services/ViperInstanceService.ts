@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import path from 'path';
 import { QueryTypes } from 'sequelize';
 import db from '../models';
+import { INSTANCE_CREDENTIAL_ATTRIBUTES } from '../models/viperinstance';
 import helperFunctions from '../utility/helperFunctions';
 import { getAvailablePort } from '../utility/portManager';
 import { appLogger } from '../config/logger';
@@ -26,6 +27,27 @@ export interface ServiceUser {
   role: UserRole;
   team?: string;
   invitedById?: number;
+}
+
+// Docker's inspect output carries the container's full environment, which holds
+// SELKIES_MASTER_TOKEN. That token mints desktop access through the control
+// plane, so the values are replaced with a marker before the payload is
+// serialised anywhere. Variable names are kept, since they are useful and not
+// sensitive.
+function redactContainerEnvironment(dockerInspect: any): any {
+  const environment = dockerInspect?.Config?.Env;
+
+  if (!Array.isArray(environment)) {
+    return dockerInspect;
+  }
+
+  return {
+    ...dockerInspect,
+    Config: {
+      ...dockerInspect.Config,
+      Env: environment.map((entry: string) => `${String(entry).split('=')[0]}=[redacted]`)
+    }
+  };
 }
 
 /**
@@ -74,7 +96,7 @@ class ViperInstanceService {
           `http://localhost:3000`)) + "/service/set-status-instance/"+statusKey+"/active",
     ];
     
-    appLogger.debug('Container environment prepared', {
+    appLogger.info('Container environment prepared', {
       eventType: 'Container Env Prepared',
       instanceUUID,
       variables: envVars.map((entry) => entry.split('=')[0]),
@@ -539,14 +561,17 @@ class ViperInstanceService {
   async inspectInstance(dockerId: string): Promise<any> {
     try {
       // Find the instance in the database
-      const instance = await db.ViperInstance.findOne({ where: { dockerid: dockerId } });
+      const instance = await db.ViperInstance.findOne({
+        where: { dockerid: dockerId },
+        attributes: { exclude: INSTANCE_CREDENTIAL_ATTRIBUTES }
+      });
       if (!instance) {
         throw new Error('Instance not found');
       }
 
       // Get container info from Docker
       const container = containerService.getContainer(dockerId);
-      const dockerInspect = await container.inspect();
+      const dockerInspect = redactContainerEnvironment(await container.inspect());
 
       // Calculate operational hours
       const createdAt = instance.createdAt ? new Date(instance.createdAt) : new Date();

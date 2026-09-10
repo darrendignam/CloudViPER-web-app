@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { QueryTypes, Op } from 'sequelize';
 import db from '../models';
+import { INSTANCE_CREDENTIAL_ATTRIBUTES } from '../models/viperinstance';
 import helperFunctions from '../utility/helperFunctions';
 import { getAvailablePort } from '../utility/portManager';
 import { appLogger } from '../config/logger';
@@ -56,11 +57,9 @@ function userToJson(_user: any) {
     };
 }
 
-// Instance columns that must never reach a browser. masterToken authenticates
-// against the container control plane and statusKey authorises monitoring
-// callbacks, so both are server-side credentials. The JSON blobs are excluded
-// for payload size, not secrecy.
-const INSTANCE_HIDDEN_ATTRIBUTES = ['masterToken', 'statusKey', 'lastScreenshot', 'activityHistory'];
+// Credentials plus the large JSON columns, which are dropped for payload size
+// rather than secrecy.
+const INSTANCE_HIDDEN_ATTRIBUTES = [...INSTANCE_CREDENTIAL_ATTRIBUTES, 'lastScreenshot', 'activityHistory'];
 
 // Helper function to check user permissions
 function checkUserPermission(user: ServiceUser | undefined, requiredRole: UserRole | UserRole[], resourceOwnerId?: number): {
@@ -693,9 +692,14 @@ async function resolveAccessibleInstance(user: ServiceUser | undefined, instance
         return { instance };
     }
 
+    // 'none' is the default team, not a team. Comparing it directly would let any
+    // teamless leader reach any teamless user's desktop, and this path mints a
+    // session token, so the mistake would hand over control rather than a view.
+    const belongsToTeam = (team?: string): boolean => !!team && team !== 'none';
+
     if (user.role === UserRole.TEAM_ADMIN || user.role === UserRole.TEAM_LEADER) {
         const owner = await db.User.findByPk(instance.owner);
-        if (owner && user.team && (owner as any).team === user.team) {
+        if (owner && belongsToTeam(user.team) && (owner as any).team === user.team) {
             return { instance };
         }
     }
