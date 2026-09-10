@@ -8,6 +8,7 @@ import helperFunctions from '../utility/helperFunctions';
 import emailRelay from '../utility/emailRelay';
 import configAuth from '../config/auth';
 import { appLogger } from '../config/logger';
+import viperInstanceService from '../services/ViperInstanceService';
 import { UserRole, isValidRole, toUserRole } from '../types/UserRole';
 
 
@@ -680,21 +681,50 @@ router.post('/login', passport.authenticate('local', { failureRedirect: '/accoun
         }
     });
 
-router.get('/logout', (req: Request, res: Response) => {
+router.get('/logout', async (req: Request, res: Response) => {
     const user = req.user as AccountUser;
-    
-    req.logout((err) => {
-        if (err) {
-            appLogger.error('Logout error', {
-                eventType: 'Logout Error',
-                userId: user?.id,
-                username: user?.username,
-                error: err.message,
+
+    // Withdraw the desktop credentials before the session ends, so a launch URL
+    // copied out of this session stops working. Containers keep running: a long
+    // job survives the logout and the user reconnects with a fresh token after
+    // signing back in.
+    //
+    // Awaited rather than fired and forgotten, so logout does not report access
+    // as ended while a token is still live. A failure must never trap the user
+    // in a signed-in state, so it is logged and swallowed.
+    if (user?.id) {
+        try {
+            await viperInstanceService.revokeUserSessions(user.id);
+        } catch (error) {
+            appLogger.error('Could not revoke desktop sessions on logout', {
+                eventType: 'Logout Revoke Error',
+                userId: user.id,
+                error: (error as Error).message,
                 timestamp: new Date().toISOString()
             });
-            res.json(err);
-        } else {
-            // Log successful logout
+        }
+    }
+
+    // Express 4 does not forward a rejected async handler to the error
+    // middleware, so anything thrown past this point would leave the request
+    // hanging until the client gives up rather than returning a status.
+    try {
+        req.logout((err) => {
+            if (err) {
+                appLogger.error('Logout error', {
+                    eventType: 'Logout Error',
+                    userId: user?.id,
+                    username: user?.username,
+                    error: err.message,
+                    timestamp: new Date().toISOString()
+                });
+                // Answering once. This used to fall through to the redirect
+                // below as well, throwing "Cannot set headers after they are
+                // sent".
+                res.status(500).json({ error: 'Logout failed' });
+                return;
+            }
+
             appLogger.info('User logged out', {
                 eventType: 'User Logout',
                 userId: user?.id,
@@ -703,9 +733,20 @@ router.get('/logout', (req: Request, res: Response) => {
                 ipAddress: req.ip,
                 timestamp: new Date().toISOString()
             });
+            res.redirect('/account/login');
+        });
+    } catch (error) {
+        appLogger.error('Logout failed unexpectedly', {
+            eventType: 'Logout Error',
+            userId: user?.id,
+            error: (error as Error).message,
+            timestamp: new Date().toISOString()
+        });
+
+        if (!res.headersSent) {
+            res.status(500).json({ error: 'Logout failed' });
         }
-        res.redirect('/account/login')
-    });
+    }
 });
 
 //Google oAuth routes

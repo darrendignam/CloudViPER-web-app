@@ -185,6 +185,23 @@ docker exec -u abc viper-a bash -c 'timeout 6 bash -c "</dev/tcp/cloud-viper-mys
 cannot read another user's `/proc/<pid>/environ`, which is why this is not visible from a
 casual look.
 
+## 6a. Decision, 2026-09-10
+
+**Accepted for 2.0.0-alpha. Not fixed.** The exposure stands as described above.
+
+Of the actions this document called for, the CHANGELOG correction is done: the sharing
+entry now says outright that the flags are a default and not an enforced control, and
+links here.
+
+Option A's network isolation is **not** done and is the next piece of work. It is not a
+config tweak: instances currently share `cloud-viper-net` with the app and MySQL because
+the ACME hooks curl `http://cloud-viper-gui-app:3000` for status callbacks, so isolating
+them means giving instances a route to the app without a route to the database. That needs
+a live stack to verify and should not be attempted alongside a demo.
+
+Nothing here blocks the alpha: the exposure lets a user mint tokens to **their own**
+desktop, which they already control. It does not reach another user's instance.
+
 ## 7. Recommendation
 
 Take **Option A** for 2.0.0, and raise **Option C** with the ViPER team in parallel.

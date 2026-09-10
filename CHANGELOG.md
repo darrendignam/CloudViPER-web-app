@@ -15,21 +15,76 @@ Ubuntu 26.04 in the same release cycle.
   token control plane, with `SelkiesControlPlaneError` distinguishing a rejected
   request (carries the HTTP status) from an unreachable or timed-out container.
 - `ViperInstanceService.grantInstanceAccess()` mints a per-session token and
-  registers it as the container's only credential. Each call displaces the
-  previous token, so relaunching an instance invalidates any earlier link.
+  adds it to the container's live set. Tokens accumulate rather than replace, so
+  a team leader looking in does not eject the owner mid-session; earlier links
+  keep working until they age out after `SESSION_TOKEN_TTL_MS` or are pushed
+  past the active-token cap. Relaunching does not revoke anything.
 - `ViperInstanceService.revokeInstanceAccess()` drops every token, disconnecting
   live viewers. Called on termination.
+- `ViperInstanceService.revokeUserSessions()` withdraws one user's tokens
+  wherever they hold them, leaving everyone else's in place. Called on logout.
+- `GET /service/launch/:instanceUUID/ready` reports whether a desktop is serving
+  yet, probed from the app rather than the browser.
 - `GET /service/launch/:instanceUUID` mints a token and frames the desktop, so
   the token stays out of the address bar, browser history and any copied URL.
   Sends `Referrer-Policy: no-referrer`.
 - `GET /service/auth/instance/:instanceUUID` provides an ownership check for the
-  reverse proxy's `auth_request` directive. Status only, no body.
+  reverse proxy's `auth_request` directive. Status only, no body. Deliberately
+  not wired: see Security below.
 - `helperFunctions.generateSessionToken()` for 32 bytes of base64url entropy.
 - `VIPER_IMAGE`, `TEST_CORPUS_HOST_PATH`, `SELKIES_CONTROL_PORT` and
   `SELKIES_CONTROL_TIMEOUT_MS` environment variables, documented in
   `src/.env.example`.
 - 37 tests covering the control plane client, token grant and revoke, and the
   launch and proxy-auth routes.
+- `INSTANCE_PROBE_TIMEOUT_MS` environment variable for the readiness probe.
+- `.dockerignore`, which keeps `.env` and `.env.prod` out of the build context.
+
+### Security
+
+- Logging out withdraws the user's desktop tokens but leaves their containers
+  running, so a long job survives the logout. Signing back in and launching
+  mints a fresh token. Only the logging-out user's tokens go, so anyone else
+  watching the same desktop keeps their view.
+- The dev-mode local strategy trace no longer logs the submitted password.
+  `appLogger` writes to a rotated file with 14-day retention that
+  `/service/logs/app` serves to admins, so a password logged there outlived the
+  request and was readable over HTTP.
+- `ContainerService.createContainer()` redacts the environment before logging
+  its options on failure. `Env` carries `SELKIES_MASTER_TOKEN`, which reached
+  the same admin-readable log.
+- `POST` replaces `GET` on `/service/new-instance` and
+  `/service/terminate-instance/:containerId`. `SameSite=Lax` sends the session
+  cookie on top-level GET navigation, so both could be driven from a third-party
+  page as the signed-in user.
+- The development Selkies control port binds `127.0.0.1` instead of Docker's
+  default `0.0.0.0`, whose iptables rules bypass a host firewall.
+- `.dockerignore` keeps developer `.env` files out of locally built images. CI
+  images were never affected, since those files are gitignored and CI builds
+  from a clean checkout.
+- `auth_request` remains unwired by decision, not oversight. The session cookie
+  is host-only for the app domain, so a subrequest for an instance subdomain
+  carries no cookie and would deny every desktop. Widening the cookie to the
+  parent domain would send it into the instance containers, where users have a
+  shell. See `docs/SELKIES_MIGRATION.md`.
+- The instance master token is still readable from inside a desktop, accepted
+  for this alpha. It permits a user to mint tokens to their own desktop and does
+  not reach anyone else's. See `docs/SELKIES_MASTER_TOKEN_EXPOSURE.md`.
+
+### Fixed
+
+- The launch page reported "Connected" over a blank frame. Its reachability
+  probe used a cross-origin `no-cors` fetch, whose opaque response resolves on a
+  502 exactly as on a 200, so a proxy error while the container started could
+  not be detected. The probe now runs server side.
+- Terminating an instance reported success even when Docker refused to remove
+  the container. The row was already marked deleted, which hid the survivor from
+  the orphan reclaim path.
+- `execInContainer` read an unsettled exec's null exit code as 0, so a failed
+  command passed for success. It now waits for Docker to settle the exec and
+  reports a negative code if it never does.
+- Logging out with a passport error sent a JSON body and then a redirect,
+  throwing "Cannot set headers after they are sent".
 
 ### Changed
 

@@ -367,7 +367,9 @@ describe('Account Routes Integration Tests', () => {
       const response = await request(tempApp)
         .get('/account/logout');
 
-      expect([200, 302, 500]).toContain(response.status);
+      // One response, not a redirect chased by a JSON body.
+      expect(response.status).toBe(500);
+      expect(response.body).toEqual({ error: 'Logout failed' });
     });
   });
 
