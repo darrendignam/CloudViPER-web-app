@@ -1,3 +1,31 @@
+/* CloudViPER 2.0 design tokens.
+ *
+ * The 2.0 language: square the chrome, keep the atmosphere round. Anything the
+ * user operates is flat, square and outlined; the floating clouds and the sky
+ * keep their soft edges and their animation, because squaring them would lose
+ * the CloudViPER identity rather than refresh it.
+ *
+ * Colours are the OPF brand guidelines (March 2020). Every outline value clears
+ * the 3:1 that WCAG 1.4.11 asks of UI component boundaries, which the previous
+ * #dee2e6 hairlines did not: they measured 1.30 against white.
+ */
+:root {
+    --opf-blue: #137DA4;
+    --opf-blue-dark: #0f6a8e;
+    --opf-green: #0D8663;
+    --opf-pink: #C73079;
+    --opf-grey: #555555;      /* 7.46 on white; replaces #6c757d at 4.69 */
+    --opf-ink: #2c3e50;
+
+    --surface: #ffffff;
+    --outline: var(--opf-blue);
+    --outline-input: var(--opf-grey);
+    --outline-width: 1px;
+
+    /* Square chrome. Clouds set their own radius and keep it. */
+    --radius-chrome: 0;
+}
+
 /* Modern, clean body styling with cloud theme */
 body {
     background: linear-gradient(to bottom, #87CEEB 0%, #E0F7FA 100%);
@@ -213,7 +241,7 @@ body {
 
 .navbar .navbar-nav > li > a,
 .navbar-nav .nav-link {
-    color: #6c757d !important;
+    color: var(--opf-grey) !important;
     border-right: 0;
     transition: color 0.3s ease;
 }
@@ -234,9 +262,11 @@ body {
     color: #2c3e50;
 }
 
+/* The brand stands alone: no italic, no colour split, no weight split between
+ * the halves of CloudViPER. */
 .header-title-p > span {
-    font-style: italic;
-    color: #137DA4;
+    font-style: normal;
+    color: inherit;
 }
 
 /* Clean main content area with cloud theme */
@@ -830,13 +860,13 @@ tr:hover {
 input.form-control {
     width: 100%;
     padding: 0.75rem 1rem;
-    border: 2px solid #e9ecef;
-    border-radius: 8px;
+    border: var(--outline-width) solid var(--outline-input);
+    border-radius: var(--radius-chrome);
     font-size: 1rem;
     line-height: 1.5;
-    transition: all 0.3s ease;
-    background-color: #fff;
-    color: #495057;
+    transition: border-color 0.15s ease;
+    background-color: var(--surface);
+    color: var(--opf-ink);
 }
 
 .modern-form input:focus,
@@ -855,12 +885,12 @@ input.form-control:focus {
 .modern-form .btn,
 .register-form .btn,
 .nps-form .btn {
-    background: #137DA4;
+    background: var(--opf-blue);
     color: white;
-    border: 2px solid #137DA4;
+    border: var(--outline-width) solid var(--opf-blue);
     padding: 0.75rem 1.5rem;
-    border-radius: 8px;
-    font-weight: 500;
+    border-radius: var(--radius-chrome);
+    font-weight: 600;
     font-size: 1rem;
     width: 100%;
     transition: all 0.3s ease;
@@ -876,11 +906,9 @@ input.form-control:focus {
 .modern-form .btn:hover,
 .register-form .btn:hover,
 .nps-form .btn:hover {
-    background: #0f6a8e;
-    border-color: #0f6a8e;
+    background: var(--opf-blue-dark);
+    border-color: var(--opf-blue-dark);
     color: white;
-    transform: translateY(-1px);
-    box-shadow: 0 6px 20px rgba(19, 125, 164, 0.3);
 }
 
 /* Width utilities */
@@ -979,12 +1007,12 @@ input.form-control:focus {
 }
 
 .login-cloud {
-    background: rgba(255, 255, 255, 0.8);
-    border-radius: 30px;
+    background: var(--surface);
+    border: var(--outline-width) solid var(--outline);
+    border-radius: var(--radius-chrome);
     padding: 40px;
     max-width: 1000px;
     margin: 0 auto 40px auto;
-    box-shadow: 0 10px 30px rgba(135, 206, 235, 0.3);
 }
 
 .login-cloud h1 {
@@ -996,7 +1024,7 @@ input.form-control:focus {
 
 .login-cloud > p {
     text-align: center;
-    color: #6c757d;
+    color: var(--opf-grey);
     font-size: 1.1rem;
     margin-bottom: 30px;
 }
@@ -1029,31 +1057,33 @@ input.form-control:focus {
 .login-form input {
     width: 100%;
     padding: 12px 15px;
-    border: 2px solid rgba(135, 206, 235, 0.3);
-    border-radius: 20px;
+    border: var(--outline-width) solid var(--outline-input);
+    border-radius: var(--radius-chrome);
     margin-bottom: 20px;
-    background: rgba(255, 255, 255, 0.9);
-    transition: border-color 0.3s ease;
+    background: var(--surface);
+    transition: border-color 0.15s ease;
 }
 
 .login-form input:focus {
     outline: none;
-    border-color: #87CEEB;
-    background: white;
+    border-color: var(--opf-blue);
+    background: var(--surface);
 }
 
 .login-form button {
     width: 100%;
     padding: 12px;
-    background: linear-gradient(135deg, #137DA4 0%, #20B2AA 100%);
-    border: none;
-    border-radius: 20px;
+    /* Flat, not a gradient: the old #137DA4 to #20B2AA ramp ended at 2.62
+     * against white text, failing AA across the right half of the button. */
+    background: var(--opf-blue);
+    border: var(--outline-width) solid var(--opf-blue);
+    border-radius: var(--radius-chrome);
     color: white;
-    font-weight: 500;
+    font-weight: 600;
     font-size: 16px;
     cursor: pointer;
     margin-bottom: 15px;
-    transition: transform 0.2s ease;
+    transition: background-color 0.15s ease;
 }
 
 .login-form button:hover {
@@ -1064,10 +1094,10 @@ input.form-control:focus {
     display: block;
     width: 100%;
     padding: 12px;
-    background: white;
-    border: 2px solid rgba(66, 133, 244, 0.3);
-    border-radius: 20px;
-    color: #4285F4;
+    background: var(--surface);
+    border: var(--outline-width) solid var(--opf-blue);
+    border-radius: var(--radius-chrome);
+    color: var(--opf-blue);
     text-decoration: none;
     text-align: center;
     margin-bottom: 20px;
@@ -1117,8 +1147,9 @@ input.form-control:focus {
 }
 
 .info-section {
-    background: rgba(255, 255, 255, 0.8);
-    border-radius: 25px;
+    background: var(--surface);
+    border: var(--outline-width) solid var(--outline);
+    border-radius: var(--radius-chrome);
     padding: 40px;
     max-width: 1000px;
     margin: 0 auto;
@@ -1434,4 +1465,46 @@ input.form-control:focus {
     border: 1px solid #dee2e6;
     border-radius: 0 0 4px 4px;
     background: #000;
+}
+
+
+/* CloudViPER 2.0: the version signal.
+ *
+ * A pink underline on the current section, and nothing else. Colour is never
+ * the only cue here: the item is also the one the user is on, and it carries
+ * its own text, so this still reads in greyscale and to a colour-blind user.
+ *
+ * OPF green is deliberately not used for this. It measures dE 9.3 from the
+ * app's success green and 4.2 under tritanopia, so a green version accent
+ * would be confusable with "connected" and "succeeded".
+ */
+.navbar-nav .nav-link.active,
+.navbar-nav .nav-item.active > .nav-link {
+    color: var(--opf-ink) !important;
+    font-weight: 600;
+    border-bottom: 3px solid var(--opf-pink);
+    padding-bottom: 3px;
+}
+
+/* The navbar's items are all outbound links, so no page is ever the "current"
+ * one and an active-item underline would have nothing to attach to on most
+ * screens. The accent therefore underlines the bar itself, which is present on
+ * every page and reads the same way. */
+.navbar.fixed-top {
+    border-bottom: 3px solid var(--opf-pink);
+}
+
+/* Square the remaining chrome. The clouds are untouched by design: they keep
+ * border-radius 50-60px and their floatUp animations further up this file. */
+.card,
+.modern-form-container,
+.auth-form-container,
+.alert,
+.table {
+    border-radius: var(--radius-chrome);
+}
+
+.card {
+    border: var(--outline-width) solid var(--outline);
+    box-shadow: none;
 }
