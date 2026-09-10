@@ -71,17 +71,20 @@ describe('Service launch and proxy auth routes', () => {
     });
 
     describe('GET /service/launch/:instanceUUID', () => {
-        it('should mint a token and frame the desktop for the owner', async () => {
+        it('should render the shell without minting anything', async () => {
             const response = await request(buildApp(OWNER)).get('/service/launch/inst123abc45').expect(200);
 
-            expect(mockService.grantInstanceAccess).toHaveBeenCalledWith(INSTANCE);
             expect(response.text).toContain('<iframe');
-            // Handlebars escapes "=" to "&#x3D;" in the src attribute. Browsers
-            // decode character references inside attribute values, so the URL
-            // requested is the unescaped one; assert against that.
-            expect(decodeHtmlEntities(frameSource(response.text))).toBe(
-                'http://inst123abc45.example.org/?token=minted-session-token'
-            );
+            expect(response.text).toContain('inst123abc45');
+            // A GET must not change state: minting replaces the control plane's
+            // token set, which would disconnect a live session.
+            expect(mockService.grantInstanceAccess).not.toHaveBeenCalled();
+        });
+
+        it('should not put a token in the rendered page', async () => {
+            const response = await request(buildApp(OWNER)).get('/service/launch/inst123abc45');
+
+            expect(response.text).not.toContain('token=');
         });
 
         it('should keep the token out of the address bar by never redirecting to it', async () => {
@@ -97,12 +100,10 @@ describe('Service launch and proxy auth routes', () => {
             expect(response.headers['referrer-policy']).toBe('no-referrer');
         });
 
-        it('should allow an admin to launch an instance they do not own', async () => {
+        it('should allow an admin to open an instance they do not own', async () => {
             const admin = { ...OWNER, id: 99, role: UserRole.ADMIN };
 
             await request(buildApp(admin)).get('/service/launch/inst123abc45').expect(200);
-
-            expect(mockService.grantInstanceAccess).toHaveBeenCalled();
         });
 
         it('should reject an unauthenticated caller with 401', async () => {
@@ -142,14 +143,6 @@ describe('Service launch and proxy auth routes', () => {
             await request(buildApp(OWNER)).get('/service/launch/unknownuuid1').expect(404);
         });
 
-        it('should return 502 when the container control plane cannot be reached', async () => {
-            mockService.grantInstanceAccess.mockRejectedValue(new Error('Could not reach control plane'));
-
-            const response = await request(buildApp(OWNER)).get('/service/launch/inst123abc45').expect(502);
-
-            expect(response.body.error).toBe('Could not prepare the instance for launch');
-        });
-
         it('should never put the instance master token in the rendered page', async () => {
             mockDb.ViperInstance.findOne.mockResolvedValue({ ...INSTANCE, masterToken: 'super-secret-master' });
 
@@ -158,10 +151,73 @@ describe('Service launch and proxy auth routes', () => {
             expect(response.text).not.toContain('super-secret-master');
         });
 
-        it('should not leak the control plane failure detail to the caller', async () => {
+    });
+
+    describe('POST /service/launch/:instanceUUID/token', () => {
+        it('should mint a controller token for the owner and return the framed URL', async () => {
+            const response = await request(buildApp(OWNER))
+                .post('/service/launch/inst123abc45/token')
+                .expect(200);
+
+            expect(mockService.grantInstanceAccess).toHaveBeenCalledWith(INSTANCE, 'controller');
+            expect(response.body.url).toBe('http://inst123abc45.example.org/?token=minted-session-token');
+            expect(response.body.role).toBe('controller');
+        });
+
+        it('should mint a viewer token for a team leader, not a controller one', async () => {
+            mockDb.User.findByPk.mockResolvedValue({ id: 42, team: 'preservation' });
+            const leader = { ...OWNER, id: 88, role: UserRole.TEAM_LEADER, team: 'preservation' };
+
+            const response = await request(buildApp(leader))
+                .post('/service/launch/inst123abc45/token')
+                .expect(200);
+
+            expect(mockService.grantInstanceAccess).toHaveBeenCalledWith(INSTANCE, 'viewer');
+            expect(response.body.role).toBe('viewer');
+        });
+
+        it('should send Referrer-Policy: no-referrer with the token', async () => {
+            const response = await request(buildApp(OWNER)).post('/service/launch/inst123abc45/token');
+
+            expect(response.headers['referrer-policy']).toBe('no-referrer');
+        });
+
+        it('should point at the published host port in development', async () => {
+            mockDb.ViperInstance.findOne.mockResolvedValue({ ...INSTANCE, devPorts: { web: 3010, control: 3011 } });
+
+            const response = await request(buildApp(OWNER)).post('/service/launch/inst123abc45/token');
+
+            expect(response.body.url).toBe('http://localhost:3010/?token=minted-session-token');
+        });
+
+        it('should reject an unauthenticated caller', async () => {
+            await request(buildApp()).post('/service/launch/inst123abc45/token').expect(401);
+
+            expect(mockService.grantInstanceAccess).not.toHaveBeenCalled();
+        });
+
+        it('should reject a stranger and mint nothing', async () => {
+            const stranger = { ...OWNER, id: 77, team: 'other' };
+
+            await request(buildApp(stranger)).post('/service/launch/inst123abc45/token').expect(403);
+
+            expect(mockService.grantInstanceAccess).not.toHaveBeenCalled();
+        });
+
+        it('should return 502 when the control plane cannot be reached', async () => {
+            mockService.grantInstanceAccess.mockRejectedValue(new Error('Could not reach control plane'));
+
+            const response = await request(buildApp(OWNER))
+                .post('/service/launch/inst123abc45/token')
+                .expect(502);
+
+            expect(response.body.error).toBe('Could not prepare the instance for launch');
+        });
+
+        it('should not leak control plane failure detail to the caller', async () => {
             mockService.grantInstanceAccess.mockRejectedValue(new Error('Bearer master-token-abc rejected'));
 
-            const response = await request(buildApp(OWNER)).get('/service/launch/inst123abc45');
+            const response = await request(buildApp(OWNER)).post('/service/launch/inst123abc45/token');
 
             expect(response.text).not.toContain('master-token-abc');
         });

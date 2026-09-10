@@ -257,7 +257,12 @@ describe('Service Routes', () => {
         mockContainer.inspect.mockResolvedValue({
             Id: TEST_CONTAINERS.VALID_ID,
             State: { Status: 'running' },
-            Config: { Image: 'test-image' }
+            Config: {
+                Image: 'test-image',
+                // Orphan teardown refuses a container that does not claim to be
+                // one of ours.
+                Labels: { 'org.openpreservation.cloudviper.instance': 'test-uuid' }
+            }
         });
         // DockerContainerService awaits these, so they resolve rather than
         // taking a callback.
@@ -495,7 +500,7 @@ describe('Service Routes', () => {
             expect(response.body.instances[0]).toHaveProperty('canTerminate');
             expect(db.ViperInstance.findAll).toHaveBeenCalledWith({
                 attributes: {
-                    exclude: ['masterToken', 'statusKey', 'lastScreenshot', 'activityHistory']
+                    exclude: ['masterToken', 'statusKey', 'sessionTokens', 'lastScreenshot', 'activityHistory']
                 },
                 include: [{
                     model: db.User,
@@ -551,7 +556,7 @@ describe('Service Routes', () => {
             expect(db.ViperInstance.findAll).toHaveBeenCalledWith({
                 where: { owner: 2 },
                 attributes: {
-                    exclude: ['masterToken', 'statusKey', 'lastScreenshot', 'activityHistory']
+                    exclude: ['masterToken', 'statusKey', 'sessionTokens', 'lastScreenshot', 'activityHistory']
                 },
                 include: [{
                     model: db.User,
@@ -692,6 +697,41 @@ describe('Service Routes', () => {
             expect(response.status).toBe(200);
             expect(response.body.message).toBe('Orphaned container removed');
             expect(mockContainer.stop).toHaveBeenCalled();
+            expect(mockContainer.remove).toHaveBeenCalled();
+        }, 10000);
+
+        it('should refuse to remove a container that is not a CloudViPER instance', async () => {
+            (db.ViperInstance.findOne as jest.Mock).mockResolvedValue(null);
+            // The orchestrator's own container, MySQL and the proxy all clear the
+            // route's only check, that the id is ten characters or more.
+            mockContainer.inspect.mockResolvedValue({ Config: { Image: 'mysql:8.0', Labels: {} } });
+
+            const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
+            const response = await request(testApp).get('/service/terminate-instance/cloud-viper-mysqldb');
+
+            expect(response.status).toBe(404);
+            expect(mockContainer.remove).not.toHaveBeenCalled();
+        }, 10000);
+
+        it('should refuse a container it cannot inspect', async () => {
+            (db.ViperInstance.findOne as jest.Mock).mockResolvedValue(null);
+            mockContainer.inspect.mockRejectedValue(new Error('no such container'));
+
+            const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
+            const response = await request(testApp).get('/service/terminate-instance/deadbeef1234');
+
+            expect(response.status).toBe(404);
+            expect(mockContainer.remove).not.toHaveBeenCalled();
+        }, 10000);
+
+        it('should still remove a container whose stop call fails', async () => {
+            mockContainer.stop.mockRejectedValue(new Error('container already stopped'));
+
+            const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
+            await request(testApp).get('/service/terminate-instance/test-container-id');
+
+            // An exited container is exactly the state orphan teardown exists for,
+            // and Docker rejects stop on one.
             expect(mockContainer.remove).toHaveBeenCalled();
         }, 10000);
 
@@ -867,7 +907,12 @@ describe('Service Routes', () => {
             const mockDockerInspect = {
                 Id: 'test-docker-id',
                 State: { Status: 'running' },
-                Config: { Image: 'test-image' }
+                Config: {
+                Image: 'test-image',
+                // Orphan teardown refuses a container that does not claim to be
+                // one of ours.
+                Labels: { 'org.openpreservation.cloudviper.instance': 'test-uuid' }
+            }
             };
 
             (db.ViperInstance.findOne as jest.Mock).mockResolvedValue(mockInstance);

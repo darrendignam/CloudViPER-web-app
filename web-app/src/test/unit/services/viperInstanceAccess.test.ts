@@ -26,6 +26,16 @@ jest.mock('../../../services/SelkiesControlPlane', () => {
     };
 });
 
+const instanceFixture = () => ({
+    id: 7,
+    uuid: 'abc123def456',
+    name: 'viper-cloud-abc123def456',
+    masterToken: 'master-token-for-instance',
+    sessionTokens: {},
+    devPorts: null,
+    update: jest.fn().mockResolvedValue(undefined)
+});
+
 import selkiesControlPlane from '../../../services/SelkiesControlPlane';
 import viperInstanceService from '../../../services/ViperInstanceService';
 import { appLogger } from '../../../config/logger';
@@ -33,17 +43,14 @@ import { appLogger } from '../../../config/logger';
 const controlPlane = selkiesControlPlane as jest.Mocked<typeof selkiesControlPlane>;
 
 describe('ViperInstanceService instance access', () => {
-    const instance = {
-        id: 7,
-        uuid: 'abc123def456',
-        name: 'viper-cloud-abc123def456',
-        masterToken: 'master-token-for-instance'
-    };
+    let instance: any;
 
     beforeEach(() => {
         jest.clearAllMocks();
+        instance = instanceFixture();
         controlPlane.grantSoleToken.mockResolvedValue(undefined);
         controlPlane.revokeAll.mockResolvedValue(undefined);
+        controlPlane.replaceTokens.mockResolvedValue(undefined);
     });
 
     describe('grantInstanceAccess', () => {
@@ -52,10 +59,9 @@ describe('ViperInstanceService instance access', () => {
 
             expect(token).toHaveLength(43);
             expect(token).toMatch(/^[A-Za-z0-9_-]+$/);
-            expect(controlPlane.grantSoleToken).toHaveBeenCalledWith(
+            expect(controlPlane.replaceTokens).toHaveBeenCalledWith(
                 { host: 'viper-cloud-abc123def456', masterToken: 'master-token-for-instance' },
-                token,
-                'controller'
+                { [token]: { role: 'controller', slot: null, mk_control: false } }
             );
         });
 
@@ -69,19 +75,70 @@ describe('ViperInstanceService instance access', () => {
         it('should pass the requested role through to the control plane', async () => {
             const token = await viperInstanceService.grantInstanceAccess(instance, 'viewer');
 
-            expect(controlPlane.grantSoleToken).toHaveBeenCalledWith(expect.anything(), token, 'viewer');
+            expect(controlPlane.replaceTokens.mock.calls[0][1][token].role).toBe('viewer');
+        });
+
+        it('should keep existing tokens live so a viewer does not eject the owner', async () => {
+            const ownerToken = 'owner-token-already-issued';
+            instance.sessionTokens = {
+                [ownerToken]: { role: 'controller', slot: null, mk_control: false, issuedAt: new Date().toISOString() }
+            };
+
+            const viewerToken = await viperInstanceService.grantInstanceAccess(instance, 'viewer');
+            const sent = controlPlane.replaceTokens.mock.calls[0][1];
+
+            expect(Object.keys(sent).sort()).toEqual([ownerToken, viewerToken].sort());
+            expect(sent[ownerToken].role).toBe('controller');
+            expect(sent[viewerToken].role).toBe('viewer');
+        });
+
+        it('should drop tokens past their lifetime rather than accumulating them', async () => {
+            const stale = new Date(Date.now() - (13 * 60 * 60 * 1000)).toISOString();
+            instance.sessionTokens = {
+                'long-forgotten': { role: 'controller', slot: null, mk_control: false, issuedAt: stale }
+            };
+
+            const token = await viperInstanceService.grantInstanceAccess(instance);
+            const sent = controlPlane.replaceTokens.mock.calls[0][1];
+
+            expect(Object.keys(sent)).toEqual([token]);
+        });
+
+        it('should not send its own bookkeeping field to the control plane', async () => {
+            const token = await viperInstanceService.grantInstanceAccess(instance);
+
+            expect(controlPlane.replaceTokens.mock.calls[0][1][token]).not.toHaveProperty('issuedAt');
+        });
+
+        it('should persist the issued set so the next grant can rebuild it', async () => {
+            const token = await viperInstanceService.grantInstanceAccess(instance);
+
+            expect(instance.update).toHaveBeenCalledWith({
+                sessionTokens: expect.objectContaining({ [token]: expect.objectContaining({ role: 'controller' }) })
+            });
+        });
+
+        it('should address the control plane by published port in development', async () => {
+            instance.devPorts = { web: 3010, control: 3011 };
+
+            await viperInstanceService.grantInstanceAccess(instance);
+
+            expect(controlPlane.replaceTokens).toHaveBeenCalledWith(
+                { host: '127.0.0.1', masterToken: 'master-token-for-instance', port: 3011 },
+                expect.anything()
+            );
         });
 
         it('should refuse an instance created before Selkies support', async () => {
             await expect(
-                viperInstanceService.grantInstanceAccess({ ...instance, masterToken: null })
+                viperInstanceService.grantInstanceAccess({ ...instanceFixture(), masterToken: null })
             ).rejects.toThrow(/predates Selkies support/);
 
-            expect(controlPlane.grantSoleToken).not.toHaveBeenCalled();
+            expect(controlPlane.replaceTokens).not.toHaveBeenCalled();
         });
 
         it('should propagate control plane failures rather than returning a dead token', async () => {
-            controlPlane.grantSoleToken.mockRejectedValue(
+            controlPlane.replaceTokens.mockRejectedValue(
                 new SelkiesControlPlaneError('rejected', 'viper-cloud-abc123def456', 401)
             );
 
@@ -114,7 +171,7 @@ describe('ViperInstanceService instance access', () => {
         });
 
         it('should be a no-op for an instance with no master token', async () => {
-            await viperInstanceService.revokeInstanceAccess({ ...instance, masterToken: null });
+            await viperInstanceService.revokeInstanceAccess({ ...instanceFixture(), masterToken: null });
 
             expect(controlPlane.revokeAll).not.toHaveBeenCalled();
         });
@@ -162,7 +219,7 @@ describe('ViperInstanceService instance inspection', () => {
 
         expect(db.ViperInstance.findOne).toHaveBeenCalledWith(
             expect.objectContaining({
-                attributes: { exclude: ['masterToken', 'statusKey'] }
+                attributes: { exclude: ['masterToken', 'statusKey', 'sessionTokens'] }
             })
         );
     });
