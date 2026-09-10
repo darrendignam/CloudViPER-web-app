@@ -254,11 +254,14 @@ router.get('/member', async (req: Request, res: Response) => {
         
         res.render('service_member', { user: userToJson(fullUser || user!) });
     } catch (error) {
-        console.error('Error fetching full user data:', error);
+        appLogger.error('Could not load full user data for member page', {
+            eventType: 'Member Page Data Error',
+            userId: user!.id,
+            error: (error as Error).message,
+            timestamp: new Date().toISOString()
+        });
         res.render('service_member', { user: userToJson(user!) });
     }
-    
-    res.render('service_member', { user: userToJson(user!) });
 });
 
 router.get('/team-admin', async (req: Request, res: Response) => {
@@ -636,10 +639,10 @@ router.get('/terminate-instance/:containerId', async (req: Request, res: Respons
     try {
         // Use ViperInstanceService to terminate the instance
         const result = await viperInstanceService.terminateInstance(containerID, user);
-        
+
         res.json({
             success: true,
-            message: 'Instance terminated successfully'
+            message: result.message
         });
     } catch (error) {
         appLogger.error('Error during termination', {
@@ -1566,29 +1569,14 @@ router.get('/screenshot/:instanceUUID', async (req: Request, res: Response): Pro
     }
 
     try {
-        const instance = await db.ViperInstance.findOne({
-            where: { uuid: instanceUUID }
-        });
+        const access = await resolveAccessibleInstance(user, instanceUUID);
 
-        if (!instance) {
-            res.status(404).json({ error: 'Instance not found' });
+        if (!access.instance) {
+            res.status(access.status!).json({ error: access.error });
             return;
         }
 
-        // Check if user owns instance, is admin, or is team_admin/team_leader for the owner
-        let canView = false;
-        if (instance.owner === user.id || user.role === UserRole.ADMIN) {
-            canView = true;
-        } else if (user.role === UserRole.TEAM_ADMIN || user.role === UserRole.TEAM_LEADER) {
-            const ownerUser = await db.User.findOne({ where: { id: instance.owner } });
-            if (ownerUser && ownerUser.team === user.team) {
-                canView = true;
-            }
-        }
-        if (!canView) {
-            res.status(403).json({ error: 'Unauthorized - can only view own or team instances' });
-            return;
-        }
+        const instance = access.instance;
 
         // Get latest screenshot from Screenshot table
         const latestScreenshot = await db.Screenshot.findOne({
@@ -1642,29 +1630,14 @@ router.get('/screenshot-image/:instanceUUID', async (req: Request, res: Response
     }
 
     try {
-        const instance = await db.ViperInstance.findOne({
-            where: { uuid: instanceUUID }
-        });
+        const access = await resolveAccessibleInstance(user, instanceUUID);
 
-        if (!instance) {
-            res.status(404).json({ error: 'Instance not found' });
+        if (!access.instance) {
+            res.status(access.status!).json({ error: access.error });
             return;
         }
 
-        // Check if user owns instance, is admin, or is team_admin/team_leader for the owner
-        let canView = false;
-        if (instance.owner === user.id || user.role === UserRole.ADMIN) {
-            canView = true;
-        } else if (user.role === UserRole.TEAM_ADMIN || user.role === UserRole.TEAM_LEADER) {
-            const ownerUser = await db.User.findOne({ where: { id: instance.owner } });
-            if (ownerUser && ownerUser.team === user.team) {
-                canView = true;
-            }
-        }
-        if (!canView) {
-            res.status(403).json({ error: 'Unauthorized - can only view own or team instances' });
-            return;
-        }
+        const instance = access.instance;
 
         // Get screenshots from Screenshot table
         const screenshots = await db.Screenshot.findAll({
@@ -1725,29 +1698,14 @@ router.get('/screenshots/:instanceUUID', async (req: Request, res: Response): Pr
     }
 
     try {
-        const instance = await db.ViperInstance.findOne({
-            where: { uuid: instanceUUID }
-        });
+        const access = await resolveAccessibleInstance(user, instanceUUID);
 
-        if (!instance) {
-            res.status(404).json({ error: 'Instance not found' });
+        if (!access.instance) {
+            res.status(access.status!).json({ error: access.error });
             return;
         }
 
-        // Check if user owns instance, is admin, or is team_admin/team_leader for the owner
-        let canView = false;
-        if (instance.owner === user.id || user.role === UserRole.ADMIN) {
-            canView = true;
-        } else if (user.role === UserRole.TEAM_ADMIN || user.role === UserRole.TEAM_LEADER) {
-            const ownerUser = await db.User.findOne({ where: { id: instance.owner } });
-            if (ownerUser && ownerUser.team === user.team) {
-                canView = true;
-            }
-        }
-        if (!canView) {
-            res.status(403).json({ error: 'Unauthorized - can only view own or team instances' });
-            return;
-        }
+        const instance = access.instance;
 
         // Get all screenshots from Screenshot table
         const allScreenshots = await db.Screenshot.findAll({
