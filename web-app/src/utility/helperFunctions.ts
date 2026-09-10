@@ -1,4 +1,11 @@
+import crypto from 'crypto';
 import { UserRole } from '../types/UserRole';
+
+const RANDOM_STRING_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
+
+// Largest multiple of the alphabet size that fits in a byte. Bytes at or above
+// this are rejected rather than folded, which would bias the low characters.
+const UNBIASED_BYTE_CEILING = 256 - (256 % RANDOM_STRING_ALPHABET.length);
 
 const helperFunctions = {
     sanitizeUsername: (name: string): string => {
@@ -20,13 +27,18 @@ const helperFunctions = {
         return UserRole.USER;
     },
     generateRandomString: (length: number): string => {
-        const characters = 'abcdefghijklmnopqrstuvwxyz0123456789';
         let result = '';
-        const charactersLength = characters.length;
-        for (let i = 0; i < length; i++) {
-            result += characters.charAt(Math.floor(Math.random() * charactersLength));
+        while (result.length < length) {
+            for (const byte of crypto.randomBytes(length - result.length)) {
+                if (byte < UNBIASED_BYTE_CEILING) {
+                    result += RANDOM_STRING_ALPHABET.charAt(byte % RANDOM_STRING_ALPHABET.length);
+                }
+            }
         }
         return result;
+    },
+    generateSessionToken: (): string => {
+        return crypto.randomBytes(32).toString('base64url');
     }
 };
 
