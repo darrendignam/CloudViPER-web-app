@@ -743,7 +743,7 @@ class ViperInstanceService {
    * Confirm a container carries this service's instance label. Anything the
    * service did not create, or that cannot be inspected, is refused.
    */
-  private async isCloudViperInstance(containerId: string): Promise<boolean> {
+  private async isCloudViPERInstance(containerId: string): Promise<boolean> {
     try {
       const container = containerService.getContainer(containerId);
       const details = await container.inspect();
@@ -822,7 +822,7 @@ class ViperInstanceService {
         // so the container must identify itself. The route only checks that the
         // id is ten characters or more, and names like cloud-viper-gui-app and
         // cloud-viper-mysqldb clear that easily.
-        if (!(await this.isCloudViperInstance(containerId))) {
+        if (!(await this.isCloudViPERInstance(containerId))) {
           throw new Error('Instance not found');
         }
 
