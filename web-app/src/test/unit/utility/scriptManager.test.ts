@@ -113,17 +113,15 @@ describe('Script Manager', () => {
                 'readme.txt',
                 'config.json'
             ];
-            // getAvailableScripts filters by extension, so a stray .service file
-            // in the directory is still listed even though nothing reads one.
-            
             mockFs.existsSync.mockReturnValue(true);
             mockFs.readdirSync.mockReturnValue(mockFiles as any);
             
             const result = getAvailableScripts();
             
+            // .service is not listed: the systemd unit was removed in 2.0 and
+            // nothing produces or consumes one.
             expect(result).toEqual([
                 'viper-monitor.sh',
-                'viper-monitor.service',
                 'viper-monitor.desktop'
             ]);
         });
@@ -153,7 +151,6 @@ describe('Script Manager', () => {
             
             expect(result).toEqual([
                 'script1.sh',
-                'script2.service',
                 'script3.desktop'
             ]);
         });

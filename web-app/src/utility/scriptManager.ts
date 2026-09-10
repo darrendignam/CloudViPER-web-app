@@ -74,7 +74,6 @@ export function getAvailableScripts(): string[] {
 
     return fs.readdirSync(scriptsDir).filter(file =>
         file.endsWith('.sh') ||
-        file.endsWith('.service') ||
         file.endsWith('.desktop')
     );
 }

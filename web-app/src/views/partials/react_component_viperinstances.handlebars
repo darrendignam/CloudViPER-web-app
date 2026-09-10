@@ -980,7 +980,6 @@ Current Activity Score: ${data.summary.currentScore || 0}`);
                               'Unknown'
                             }
                           </div>
-                          <div><strong>VNC Password:</strong> <code>{instanceDetails.instance && instanceDetails.instance.kasmvncPassword || 'Unknown'}</code></div>
                           <div><strong>URL:</strong> 
                             {instanceDetails.instance && instanceDetails.instance.url ? (
                               instanceDetails.instance.status === 'active' ? (
@@ -1088,8 +1087,6 @@ Current Activity Score: ${data.summary.currentScore || 0}`);
                       instance.url
                     )}
                   </small><br/>
-                                <small className="text-muted"><strong>Username: </strong>abc</small><br/>
-                                <small className="text-muted"><strong>Password: </strong>{instance.kasmvncPassword}</small><br/>
                                 <small className="text-muted"><strong>Created At: </strong>{new Date(instance.createdAt).toLocaleString()}</small><br/>
                                 <small className="text-muted"><strong>Owner: </strong>{this.formatOwnerInfo(instance)}</small><br/>
                                 {instance.lastActivity && (
