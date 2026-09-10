@@ -21,7 +21,7 @@ process.env.FORCE_DB_SYNC = 'false';
 // Set test timeout globally
 jest.setTimeout(30000);
 
-// Mock get-port to avoid ES module issues
-jest.mock('get-port', () => {
-    return jest.fn().mockResolvedValue(3001);
-});
+// No get-port mock here. It was never a dependency of this project, nothing
+// imports it, and utility/portManager finds free ports with the net module. On
+// a clean install the mock fails to resolve and takes every suite down with it,
+// which is why CI failed on its first real run while local passed.
