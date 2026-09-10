@@ -25,7 +25,8 @@ jest.mock('dockerode', () => {
 });
 
 jest.mock('../../../utility/helperFunctions', () => ({
-    generateRandomString: jest.fn()
+    generateRandomString: jest.fn(),
+    generateSessionToken: jest.fn(() => 'mock-session-token')
 }));
 
 jest.mock('../../../utility/portManager', () => ({
@@ -161,7 +162,7 @@ describe('Service Routes', () => {
         dockerid: TEST_CONTAINERS.VALID_ID,
         name: 'viper-cloud-mock-random-string',
         url: 'mock-random-string.localhost',
-        kasmvncPassword: 'mock-random-string',
+        masterToken: 'mock-random-string',
         statusKey: 'mock-random-string',
         owner: 1,
         status: 'created',
@@ -379,7 +380,7 @@ describe('Service Routes', () => {
                 dockerid: 'test-container-id',
                 name: 'viper-cloud-mock-random-string',
                 url: 'mock-random-string.localhost',
-                kasmvncPassword: 'mock-random-string',
+                masterToken: 'mock-random-string',
                 statusKey: 'mock-random-string',
                 owner: 1,
                 status: 'created',
@@ -496,7 +497,7 @@ describe('Service Routes', () => {
             expect(response.body.instances[0]).toHaveProperty('canTerminate');
             expect(db.ViperInstance.findAll).toHaveBeenCalledWith({
                 attributes: {
-                    exclude: ['lastScreenshot', 'activityHistory']
+                    exclude: ['masterToken', 'statusKey', 'lastScreenshot', 'activityHistory']
                 },
                 include: [{
                     model: db.User,
@@ -552,7 +553,7 @@ describe('Service Routes', () => {
             expect(db.ViperInstance.findAll).toHaveBeenCalledWith({
                 where: { owner: 2 },
                 attributes: {
-                    exclude: ['lastScreenshot', 'activityHistory']
+                    exclude: ['masterToken', 'statusKey', 'lastScreenshot', 'activityHistory']
                 },
                 include: [{
                     model: db.User,

@@ -56,6 +56,12 @@ function userToJson(_user: any) {
     };
 }
 
+// Instance columns that must never reach a browser. masterToken authenticates
+// against the container control plane and statusKey authorises monitoring
+// callbacks, so both are server-side credentials. The JSON blobs are excluded
+// for payload size, not secrecy.
+const INSTANCE_HIDDEN_ATTRIBUTES = ['masterToken', 'statusKey', 'lastScreenshot', 'activityHistory'];
+
 // Helper function to check user permissions
 function checkUserPermission(user: ServiceUser | undefined, requiredRole: UserRole | UserRole[], resourceOwnerId?: number): {
     authorized: boolean;
@@ -434,7 +440,7 @@ router.get('/viperinstances', async (req: Request, res: Response): Promise<void>
             // Admin can see all instances with optimized query - exclude heavy JSON fields
             instances = await db.ViperInstance.findAll({
                 attributes: {
-                    exclude: ['lastScreenshot', 'activityHistory'] // Exclude heavy JSON fields
+                    exclude: INSTANCE_HIDDEN_ATTRIBUTES // Exclude heavy JSON fields
                 },
                 include: [
                     {
@@ -478,7 +484,7 @@ router.get('/viperinstances', async (req: Request, res: Response): Promise<void>
             const teamUserIds = teamUsers.map(u => u.id);
             instances = await db.ViperInstance.findAll({
                 where: { owner: teamUserIds },
-                attributes: { exclude: ['lastScreenshot', 'activityHistory'] },
+                attributes: { exclude: INSTANCE_HIDDEN_ATTRIBUTES },
                 include: [
                     { model: db.User, as: 'ownerUser', attributes: ['id', 'username', 'email', 'firstName', 'lastName'] },
                     { model: db.Screenshot, as: 'screenshots', attributes: ['id', 'capturedAt', 'receivedAt'], limit: 1, order: [['createdAt', 'DESC']], required: false },
@@ -513,7 +519,7 @@ router.get('/viperinstances', async (req: Request, res: Response): Promise<void>
             instances = await db.ViperInstance.findAll({
                 where: { owner: user.id },
                 attributes: {
-                    exclude: ['lastScreenshot', 'activityHistory'] // Exclude heavy JSON fields
+                    exclude: INSTANCE_HIDDEN_ATTRIBUTES // Exclude heavy JSON fields
                 },
                 include: [
                     {
@@ -662,6 +668,118 @@ router.get('/terminate-instance/:containerId', async (req: Request, res: Respons
         }
     }
 });
+
+/**
+ * Resolve an instance the caller is allowed to reach, or explain why not.
+ * Owners, their team admins and leaders, and system admins all qualify, which
+ * matches the rules already applied to the monitoring endpoints.
+ */
+async function resolveAccessibleInstance(user: ServiceUser | undefined, instanceUUID: string): Promise<{
+    instance?: any;
+    status?: number;
+    error?: string;
+}> {
+    if (!user) {
+        return { status: 401, error: 'Authentication required' };
+    }
+
+    const instance = await db.ViperInstance.findOne({ where: { uuid: instanceUUID } });
+
+    if (!instance) {
+        return { status: 404, error: 'Instance not found' };
+    }
+
+    if (user.role === UserRole.ADMIN || user.id === instance.owner) {
+        return { instance };
+    }
+
+    if (user.role === UserRole.TEAM_ADMIN || user.role === UserRole.TEAM_LEADER) {
+        const owner = await db.User.findByPk(instance.owner);
+        if (owner && user.team && (owner as any).team === user.team) {
+            return { instance };
+        }
+    }
+
+    return { status: 403, error: 'Unauthorized - can only view own or team instances' };
+}
+
+/**
+ * Open a desktop. Mints a fresh Selkies session token, registers it as the
+ * container's only credential, and frames the desktop so the token stays out of
+ * the address bar, browser history and any copied URL.
+ *
+ * Minting displaces any previously issued token, so opening an instance again
+ * invalidates the earlier link.
+ */
+router.get('/launch/:instanceUUID', async (req: Request, res: Response): Promise<void> => {
+    const user = req.user as ServiceUser | undefined;
+    const { instanceUUID } = req.params;
+
+    try {
+        const access = await resolveAccessibleInstance(user, instanceUUID);
+
+        if (!access.instance) {
+            appLogger.warn('Instance launch denied', {
+                eventType: 'Instance Launch Denied',
+                instanceUUID,
+                userId: user?.id ?? null,
+                reason: access.error,
+                timestamp: new Date().toISOString()
+            });
+            res.status(access.status!).json({ error: access.error });
+            return;
+        }
+
+        const sessionToken = await viperInstanceService.grantInstanceAccess(access.instance);
+        const scheme = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+
+        res.setHeader('Referrer-Policy', 'no-referrer');
+        res.render('service_launch', {
+            user: userToJson(user!),
+            instanceName: access.instance.name,
+            instanceUrl: `${scheme}://${access.instance.url}/?token=${encodeURIComponent(sessionToken)}`
+        });
+    } catch (error) {
+        appLogger.error('Instance launch failed', {
+            eventType: 'Instance Launch Error',
+            instanceUUID,
+            userId: user?.id ?? null,
+            error: (error as Error).message,
+            timestamp: new Date().toISOString()
+        });
+        res.status(502).json({ error: 'Could not prepare the instance for launch' });
+    }
+});
+
+/**
+ * Ownership check for the reverse proxy's auth_request directive. Returns no
+ * body: nginx only reads the status. 2xx admits the request, 401 and 403 deny.
+ */
+router.get('/auth/instance/:instanceUUID', async (req: Request, res: Response): Promise<void> => {
+    const user = req.user as ServiceUser | undefined;
+    const { instanceUUID } = req.params;
+
+    try {
+        const access = await resolveAccessibleInstance(user, instanceUUID);
+
+        if (!access.instance) {
+            res.status(access.status === 404 ? 403 : access.status!).end();
+            return;
+        }
+
+        res.status(200).end();
+    } catch (error) {
+        appLogger.error('Instance auth check failed', {
+            eventType: 'Instance Auth Check Error',
+            instanceUUID,
+            error: (error as Error).message,
+            timestamp: new Date().toISOString()
+        });
+        res.status(403).end();
+    }
+});
+
+
 
 router.get('/set-status-instance/:statuskey/:status', async (req: Request, res: Response): Promise<void> => {
     const statuskey = req.params.statuskey;

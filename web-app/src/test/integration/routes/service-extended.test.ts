@@ -27,7 +27,8 @@ jest.mock('dockerode', () => {
 });
 
 jest.mock('../../../utility/helperFunctions', () => ({
-    generateRandomString: jest.fn()
+    generateRandomString: jest.fn(),
+    generateSessionToken: jest.fn(() => 'mock-session-token')
 }));
 
 jest.mock('../../../utility/portManager', () => ({

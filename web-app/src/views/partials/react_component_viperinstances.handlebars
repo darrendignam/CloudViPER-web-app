@@ -546,8 +546,8 @@
         });
       }
 
-      formatUrl = (url) => {
-        return 'https://' + url;
+      launchUrl = (uuid) => {
+        return '/service/launch/' + uuid;
       }
 
       loadActivityHistory = async (instanceUUID) => {
@@ -984,7 +984,7 @@ Current Activity Score: ${data.summary.currentScore || 0}`);
                           <div><strong>URL:</strong> 
                             {instanceDetails.instance && instanceDetails.instance.url ? (
                               instanceDetails.instance.status === 'active' ? (
-                                <a href={this.formatUrl(instanceDetails.instance.url)} target="_blank" rel="noopener noreferrer">
+                                <a href={this.launchUrl(instanceDetails.instance.uuid)} target="_blank" rel="noopener noreferrer">
                                   {instanceDetails.instance.url}
                                 </a>
                               ) : (
@@ -1083,7 +1083,7 @@ Current Activity Score: ${data.summary.currentScore || 0}`);
                   <small className="text-muted">
                     <strong>URL: </strong>
                     {instance.status === 'active' ? (
-                      <a href={this.formatUrl(instance.url)} target="_blank" rel="noopener noreferrer">{instance.url}</a>
+                      <a href={this.launchUrl(instance.uuid)} target="_blank" rel="noopener noreferrer">{instance.url}</a>
                     ) : (
                       instance.url
                     )}
@@ -1122,7 +1122,7 @@ Current Activity Score: ${data.summary.currentScore || 0}`);
                               <div className="instance-buttons">
                                 <button
                                   className={'btn btn-primary ' + (instance.status === 'active' ? '' : 'disabled')} 
-                                  onClick={() => window.open(this.formatUrl(instance.url), '_blank')}
+                                  onClick={() => window.open(this.launchUrl(instance.uuid), '_blank')}
                                   disabled={instance.status !== 'active'}
                                 >
                                   <i className="fas fa-external-link-alt"></i> Launch Instance

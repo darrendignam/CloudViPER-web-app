@@ -1388,3 +1388,46 @@ input.form-control:focus {
         padding-right: 10px;
     }
 }
+/* Framed ViPER desktop (2.0.0, Selkies) */
+.viper-launch {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 140px);
+    min-height: 480px;
+}
+
+.viper-launch-bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 8px 12px;
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-bottom: none;
+    border-radius: 4px 4px 0 0;
+}
+
+.viper-launch-title {
+    font-weight: 600;
+}
+
+.viper-launch-status {
+    color: #6c757d;
+    font-size: 0.875rem;
+}
+
+.viper-launch-status.is-connected {
+    color: #198754;
+}
+
+.viper-launch-back {
+    margin-left: auto;
+}
+
+.viper-launch-frame {
+    flex: 1;
+    width: 100%;
+    border: 1px solid #dee2e6;
+    border-radius: 0 0 4px 4px;
+    background: #000;
+}

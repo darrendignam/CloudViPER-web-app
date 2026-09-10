@@ -1,0 +1,33 @@
+<div class="viper-launch">
+    <div class="viper-launch-bar">
+        <span class="viper-launch-title">{{instanceName}}</span>
+        <span class="viper-launch-status" id="connection-status">Connecting</span>
+        <a class="viper-launch-back" href="/service">Back to instances</a>
+    </div>
+    <iframe
+        id="viper-frame"
+        class="viper-launch-frame"
+        src="{{instanceUrl}}"
+        title="ViPER desktop"
+        allow="fullscreen; clipboard-read; clipboard-write"></iframe>
+</div>
+
+<script>
+    (function () {
+        // The desktop is framed so the session token stays out of the address
+        // bar, browser history and any URL the user might copy.
+        var status = document.getElementById('connection-status');
+        var frame = document.getElementById('viper-frame');
+
+        frame.addEventListener('load', function () {
+            status.textContent = 'Connected';
+            status.classList.add('is-connected');
+        });
+
+        window.setTimeout(function () {
+            if (!status.classList.contains('is-connected')) {
+                status.textContent = 'Still connecting, this can take a moment on first start';
+            }
+        }, 15000);
+    })();
+</script>
