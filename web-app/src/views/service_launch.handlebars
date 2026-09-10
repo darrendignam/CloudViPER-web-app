@@ -1,31 +1,61 @@
-<div class="viper-launch">
+<div class="viper-launch" data-instance-uuid="{{instanceUUID}}">
     <div class="viper-launch-bar">
         <span class="viper-launch-title">{{instanceName}}</span>
-        <span class="viper-launch-status" id="connection-status">Connecting</span>
+        <span class="viper-launch-status" id="connection-status">Requesting access</span>
         <a class="viper-launch-back" href="/service">Back to instances</a>
     </div>
     <iframe
         id="viper-frame"
         class="viper-launch-frame"
-        src="{{instanceUrl}}"
         title="ViPER desktop"
         allow="fullscreen; clipboard-read; clipboard-write"></iframe>
 </div>
 
 <script>
     (function () {
-        // The desktop is framed so the session token stays out of the address
-        // bar, browser history and any URL the user might copy.
+        // The token is fetched over POST and written straight onto the iframe,
+        // so it never enters the address bar, browser history, or a copied URL.
+        var container = document.querySelector('.viper-launch');
         var status = document.getElementById('connection-status');
         var frame = document.getElementById('viper-frame');
+        var uuid = container.getAttribute('data-instance-uuid');
+        var settled = false;
+
+        function fail(message) {
+            settled = true;
+            status.textContent = message;
+            status.classList.add('is-error');
+        }
 
         frame.addEventListener('load', function () {
+            // Only meaningful once a src has been set: a bare iframe fires load
+            // for about:blank too.
+            if (!frame.src) return;
+            settled = true;
             status.textContent = 'Connected';
             status.classList.add('is-connected');
         });
 
+        fetch('/service/launch/' + encodeURIComponent(uuid) + '/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin'
+        }).then(function (response) {
+            if (!response.ok) {
+                return response.json().catch(function () { return {}; }).then(function (body) {
+                    throw new Error(body.error || 'Could not get access to this instance');
+                });
+            }
+            return response.json();
+        }).then(function (body) {
+            status.textContent = body.role === 'viewer' ? 'Connecting, view only' : 'Connecting';
+            frame.src = body.url;
+        }).catch(function (error) {
+            fail(error.message);
+        });
+
         window.setTimeout(function () {
-            if (!status.classList.contains('is-connected')) {
+            if (!settled) {
                 status.textContent = 'Still connecting, this can take a moment on first start';
             }
         }, 15000);

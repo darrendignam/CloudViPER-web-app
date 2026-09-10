@@ -1420,6 +1420,10 @@ input.form-control:focus {
     color: #198754;
 }
 
+.viper-launch-status.is-error {
+    color: #dc3545;
+}
+
 .viper-launch-back {
     margin-left: auto;
 }

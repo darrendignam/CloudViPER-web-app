@@ -73,7 +73,16 @@ const MySQLStore = require('express-mysql-session')(session);
 const SQLStore = new MySQLStore(configAuth.mysqlSessionAuth);
 let session_config: session.SessionOptions = {
     name: "vipercloud.sid",
-    cookie: { maxAge: ((4 * 24) * 60 * 60 * 1000), secure: secure_cookie }, // 4 days
+    // sameSite 'lax' keeps the session cookie off cross-site POSTs, so a third
+    // party page cannot drive a state-changing request as the signed-in user.
+    // Top-level GET navigation still carries it, which is why anything that
+    // mints or revokes credentials is a POST.
+    cookie: {
+        maxAge: ((4 * 24) * 60 * 60 * 1000),
+        secure: secure_cookie,
+        httpOnly: true,
+        sameSite: 'lax'
+    }, // 4 days
     store: SQLStore,
     secret: process.env.APP_COOKIE_SECRET || 'default_secret', // Replace with your own secret key
     resave: false,

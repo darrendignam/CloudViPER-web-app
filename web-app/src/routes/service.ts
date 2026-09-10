@@ -6,6 +6,7 @@ import path from 'path';
 import { QueryTypes, Op } from 'sequelize';
 import db from '../models';
 import { INSTANCE_CREDENTIAL_ATTRIBUTES } from '../models/viperinstance';
+import { SelkiesRole } from '../services/SelkiesControlPlane';
 import helperFunctions from '../utility/helperFunctions';
 import { getAvailablePort } from '../utility/portManager';
 import { appLogger } from '../config/logger';
@@ -672,6 +673,22 @@ router.get('/terminate-instance/:containerId', async (req: Request, res: Respons
 });
 
 /**
+ * Where a browser should reach this desktop. Production routes by wildcard
+ * subdomain through the proxy; development has no proxy and no DNS entry, so it
+ * uses the host port the container published.
+ */
+function instanceBaseUrl(instance: any): string {
+    const devWebPort = instance.devPorts?.web;
+
+    if (devWebPort) {
+        return `http://localhost:${devWebPort}`;
+    }
+
+    const scheme = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+    return `${scheme}://${instance.url}`;
+}
+
+/**
  * Resolve an instance the caller is allowed to reach, or explain why not.
  * Owners, their team admins and leaders, and system admins all qualify, which
  * matches the rules already applied to the monitoring endpoints.
@@ -680,6 +697,7 @@ async function resolveAccessibleInstance(user: ServiceUser | undefined, instance
     instance?: any;
     status?: number;
     error?: string;
+    role?: SelkiesRole;
 }> {
     if (!user) {
         return { status: 401, error: 'Authentication required' };
@@ -691,8 +709,11 @@ async function resolveAccessibleInstance(user: ServiceUser | undefined, instance
         return { status: 404, error: 'Instance not found' };
     }
 
+    // Only the owner and a system admin drive the desktop. A team lead looking
+    // in gets a view: they supervise the session, they do not take the keyboard
+    // off the person using it.
     if (user.role === UserRole.ADMIN || user.id === instance.owner) {
-        return { instance };
+        return { instance, role: 'controller' };
     }
 
     // 'none' is the default team, not a team. Comparing it directly would let any
@@ -703,7 +724,7 @@ async function resolveAccessibleInstance(user: ServiceUser | undefined, instance
     if (user.role === UserRole.TEAM_ADMIN || user.role === UserRole.TEAM_LEADER) {
         const owner = await db.User.findByPk(instance.owner);
         if (owner && belongsToTeam(user.team) && (owner as any).team === user.team) {
-            return { instance };
+            return { instance, role: 'viewer' };
         }
     }
 
@@ -737,18 +758,63 @@ router.get('/launch/:instanceUUID', async (req: Request, res: Response): Promise
             return;
         }
 
-        const sessionToken = await viperInstanceService.grantInstanceAccess(access.instance);
-        const scheme = process.env.NODE_ENV === 'production' ? 'https' : 'http';
-
+        // The page itself mints nothing. It renders a shell that asks for a
+        // token over POST, so a cross-site link cannot cause a mint, and a mint
+        // replaces the control plane's token set.
         res.setHeader('Referrer-Policy', 'no-referrer');
         res.render('service_launch', {
             user: userToJson(user!),
             instanceName: access.instance.name,
-            instanceUrl: `${scheme}://${access.instance.url}/?token=${encodeURIComponent(sessionToken)}`
+            instanceUUID: access.instance.uuid
         });
     } catch (error) {
         appLogger.error('Instance launch failed', {
             eventType: 'Instance Launch Error',
+            instanceUUID,
+            userId: user?.id ?? null,
+            error: (error as Error).message,
+            timestamp: new Date().toISOString()
+        });
+        res.status(502).json({ error: 'Could not prepare the instance for launch' });
+    }
+});
+
+/**
+ * Mint a session token for a desktop and return the URL to frame.
+ *
+ * POST rather than GET because it changes state: a mint replaces the control
+ * plane's token set. With sameSite 'lax' on the session cookie, a cross-site
+ * page cannot reach this as the signed-in user.
+ */
+router.post('/launch/:instanceUUID/token', async (req: Request, res: Response): Promise<void> => {
+    const user = req.user as ServiceUser | undefined;
+    const { instanceUUID } = req.params;
+
+    try {
+        const access = await resolveAccessibleInstance(user, instanceUUID);
+
+        if (!access.instance) {
+            appLogger.warn('Instance token request denied', {
+                eventType: 'Instance Token Denied',
+                instanceUUID,
+                userId: user?.id ?? null,
+                reason: access.error,
+                timestamp: new Date().toISOString()
+            });
+            res.status(access.status!).json({ error: access.error });
+            return;
+        }
+
+        const sessionToken = await viperInstanceService.grantInstanceAccess(access.instance, access.role);
+
+        res.setHeader('Referrer-Policy', 'no-referrer');
+        res.json({
+            url: `${instanceBaseUrl(access.instance)}/?token=${encodeURIComponent(sessionToken)}`,
+            role: access.role
+        });
+    } catch (error) {
+        appLogger.error('Instance token mint failed', {
+            eventType: 'Instance Token Error',
             instanceUUID,
             userId: user?.id ?? null,
             error: (error as Error).message,
@@ -1795,29 +1861,14 @@ router.get('/activity/:instanceUUID', async (req: Request, res: Response): Promi
     }
 
     try {
-        const instance = await db.ViperInstance.findOne({
-            where: { uuid: instanceUUID }
-        });
+        const access = await resolveAccessibleInstance(user, instanceUUID);
 
-        if (!instance) {
-            res.status(404).json({ error: 'Instance not found' });
+        if (!access.instance) {
+            res.status(access.status!).json({ error: access.error });
             return;
         }
 
-            // Check permissions
-            let canView = false;
-            if (instance.owner === user.id || user.role === UserRole.ADMIN) {
-                canView = true;
-            } else if (user.role === UserRole.TEAM_ADMIN || user.role === UserRole.TEAM_LEADER) {
-                const ownerUser = await db.User.findOne({ where: { id: instance.owner } });
-                if (ownerUser && ownerUser.team === user.team) {
-                    canView = true;
-                }
-            }
-            if (!canView) {
-                res.status(403).json({ error: 'Unauthorized - can only view own or team instances' });
-                return;
-            }
+        const instance = access.instance;
 
         // Get activity history from Activity table
         const limitNum = parseInt(limit as string);
