@@ -656,13 +656,56 @@ class ViperInstanceService {
     }
   }
 
+  /**
+   * Stop and remove a container. A container that has already gone is not an
+   * error: the caller's goal is that it no longer runs.
+   */
+  private async removeContainer(containerId: string, instanceId?: number): Promise<void> {
+    try {
+      const container = containerService.getContainer(containerId);
+      await container.stop({ t: 5 });
+      await container.remove({ force: true });
+
+      appLogger.info('Container stopped and removed', {
+        eventType: 'Container Removed',
+        instanceId,
+        containerId,
+        timestamp: new Date().toISOString()
+      });
+    } catch (containerError) {
+      appLogger.warn('Error removing container - may already be removed', {
+        eventType: 'Container Remove Warning',
+        error: (containerError as Error).message,
+        instanceId,
+        containerId,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
   async terminateInstance(containerId: string, user: ServiceUser): Promise<any> {
     try {
       // Get instance from database
       const instance = await db.ViperInstance.findOne({ where: { dockerid: containerId } });
-      
+
+      // A container with no database row is an orphan, usually a create that
+      // failed after the container started. Leaving it running strands host
+      // resources with nothing tracking them, so it is still torn down. Only an
+      // admin may do so: without a row there is no owner to check against.
       if (!instance) {
-        throw new Error('Instance not found');
+        if (user.role !== UserRole.ADMIN) {
+          throw new Error('Instance not found');
+        }
+
+        appLogger.warn('Terminating orphaned container with no database row', {
+          eventType: 'Orphan Container Termination',
+          containerId,
+          userId: user.id,
+          timestamp: new Date().toISOString()
+        });
+
+        await this.removeContainer(containerId);
+        return { success: true, message: 'Orphaned container removed' };
       }
 
       // Check if user has permission to terminate the instance
@@ -690,30 +733,7 @@ class ViperInstanceService {
 
       await this.revokeInstanceAccess(instance);
 
-      try {
-        // Stop and remove container
-        const container = containerService.getContainer(containerId);
-        await container.stop({ t: 5 });
-        await container.remove({ force: true });
-        
-        appLogger.info('Container stopped and removed', {
-          eventType: 'Container Removed',
-          userId: user.id,
-          userRole: user.role,
-          instanceId: instance.id,
-          containerId,
-          timestamp: new Date().toISOString()
-        });
-      } catch (containerError) {
-        // Log but don't fail if container already removed
-        appLogger.warn('Error removing container - may already be removed', {
-          eventType: 'Container Remove Warning',
-          error: (containerError as Error).message,
-          instanceId: instance.id,
-          containerId,
-          timestamp: new Date().toISOString()
-        });
-      }
+      await this.removeContainer(containerId, instance.id);
 
       return { success: true, message: 'Instance terminated successfully' };
     } catch (error) {
