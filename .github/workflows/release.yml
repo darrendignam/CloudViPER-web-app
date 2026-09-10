@@ -1,0 +1,151 @@
+name: Release CloudViPER web app
+
+# Publishes the web-app container image from a version tag.
+#
+#   verify ── publish
+#
+# verify runs before anything is pushed, so a tag cannot produce an image that
+# fails its own test suite. That is not theoretical here: instance provisioning
+# was silently broken in the published image for the life of the 1.x line
+# because nothing ran the tests or checked the built image.
+#
+# GHCR only. The previous workflow also pushed to Docker Hub under
+# darrenopf/viper-cloud-gui, needing DOCKER_USERNAME and DOCKER_PASSWORD; those
+# secrets do not exist on this repository, so every tag would have failed at the
+# login step. GHCR needs nothing but the automatic GITHUB_TOKEN.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to publish under (manual runs only)
+        required: false
+        default: '0.0.0-dev'
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: cloudviper-web-app
+
+jobs:
+  verify:
+    name: Lint, type-check and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web-app
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web-app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Test
+        run: npx jest --ci --forceExit
+
+  publish:
+    name: Build and publish to GHCR
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          # repository_owner rather than a hardcoded name, so this publishes to
+          # the fork when run from the fork and to the org when run from the org.
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=${{ inputs.version }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            # latest never moves for a prerelease: 2.0.0-alpha.1 must not become
+            # what an unqualified pull returns while 1.x is still the release.
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
+          labels: |
+            org.opencontainers.image.title=CloudViPER web app
+            org.opencontainers.image.description=Container orchestrator for CloudViPER ViPER instances
+            org.opencontainers.image.vendor=Open Preservation Foundation
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The Dockerfile used to copy web-app/scripts, which holds no monitoring
+      # scripts, so instances started with no monitor and the failure was
+      # downgraded to a warning. Assert against the published image rather than
+      # trusting the COPY lines.
+      - name: Verify the provisioning scripts resolve in the published image
+        run: |
+          set -euo pipefail
+          IMAGE=$(echo '${{ steps.meta.outputs.tags }}' | head -1)
+          echo "Checking $IMAGE"
+          docker run --rm "$IMAGE" node -e "
+            const { getScriptsDirectory, validateRequiredScripts } = require('/usr/src/app/dist/utility/scriptManager');
+            const result = validateRequiredScripts();
+            console.log('resolved:', getScriptsDirectory());
+            console.log('valid:', JSON.stringify(result));
+            if (!result.valid) {
+              throw new Error('Missing provisioning scripts: ' + result.missing.join(', '));
+            }
+          "
+
+      - name: Summarise
+        run: |
+          {
+            echo "### Published"
+            echo ""
+            echo '```'
+            echo '${{ steps.meta.outputs.tags }}'
+            echo '```'
+            echo ""
+            echo "Digest: \`${{ steps.build.outputs.digest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
