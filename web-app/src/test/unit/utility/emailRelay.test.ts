@@ -4,6 +4,12 @@ import { MailerSend } from 'mailersend';
 const mockSend = jest.fn();
 
 // Mock MailerSend
+jest.mock('../../../config/logger', () => ({
+  appLogger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+  logSQL: jest.fn(),
+  logSession: jest.fn()
+}));
+
 jest.mock('mailersend', () => ({
   MailerSend: jest.fn().mockImplementation(() => ({
     email: {
@@ -23,6 +29,7 @@ jest.mock('mailersend', () => ({
 
 // Import emailRelay after the mock is set up
 import emailRelay from '../../../utility/emailRelay';
+import { appLogger } from '../../../config/logger';
 
 describe('Email Relay', () => {
   beforeEach(() => {
@@ -43,7 +50,7 @@ describe('Email Relay', () => {
       await emailRelay.sendWelcomeEmail('test@example.com', 'testuser');
 
       expect(mockSend).toHaveBeenCalledTimes(1);
-      expect(console.log).toHaveBeenCalledWith('Email sent');
+      expect(appLogger.info).toHaveBeenCalledWith('Email sent', expect.any(Object));
     });
 
     it('should handle MailerSend errors gracefully', async () => {
@@ -55,7 +62,7 @@ describe('Email Relay', () => {
       // Wait a bit for the async error handling
       await new Promise(resolve => setTimeout(resolve, 10));
 
-      expect(console.error).toHaveBeenCalledWith(error);
+      expect(appLogger.error).toHaveBeenCalledWith('Email send failed', expect.objectContaining({ error: 'MailerSend error' }));
     });
   });
 
@@ -66,7 +73,7 @@ describe('Email Relay', () => {
       await emailRelay.sendInvitedEmail('invited@example.com', 'inviteduser', 'admin@example.com');
 
       expect(mockSend).toHaveBeenCalledTimes(1);
-      expect(console.log).toHaveBeenCalledWith('Email sent');
+      expect(appLogger.info).toHaveBeenCalledWith('Email sent', expect.any(Object));
     });
   });
 
@@ -78,7 +85,7 @@ describe('Email Relay', () => {
       await emailRelay.sendResetEmail('user@example.com', 'username', token);
 
       expect(mockSend).toHaveBeenCalledTimes(1);
-      expect(console.log).toHaveBeenCalledWith('Email sent');
+      expect(appLogger.info).toHaveBeenCalledWith('Email sent', expect.any(Object));
     });
 
     it('should include security warning in reset email', async () => {

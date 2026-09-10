@@ -1,4 +1,5 @@
 import { MailerSend, EmailParams, Recipient, Sender } from "mailersend";
+import { appLogger } from '../config/logger';
 
 // Get domain name from environment variable
 const DOMAIN_NAME = process.env.DOMAIN_NAME || 'cloudviper.org';
@@ -56,9 +57,9 @@ const emailRelay: EmailRelay = {
 
         try {
             await mailerSend.email.send(emailParams);
-            console.log('Email sent');
+            appLogger.info('Email sent', { timestamp: new Date().toISOString() });
         } catch (error: any) {
-            console.error(error);
+            appLogger.error('Email send failed', { error: (error as Error)?.message ?? String(error), timestamp: new Date().toISOString() });
         }
     },
     sendInvitedEmail: async (in_email: string, in_username: string, in_invitee: string): Promise<void> => {
@@ -84,9 +85,9 @@ const emailRelay: EmailRelay = {
 
         try {
             await mailerSend.email.send(emailParams);
-            console.log('Email sent');
+            appLogger.info('Email sent', { timestamp: new Date().toISOString() });
         } catch (error: any) {
-            console.error(error);
+            appLogger.error('Email send failed', { error: (error as Error)?.message ?? String(error), timestamp: new Date().toISOString() });
         }
     },
     sendResetEmail: async (in_email: string, in_username: string, in_token: string): Promise<void> => {
@@ -115,9 +116,9 @@ const emailRelay: EmailRelay = {
 
         try {
             await mailerSend.email.send(emailParams);
-            console.log('Email sent');
+            appLogger.info('Email sent', { timestamp: new Date().toISOString() });
         } catch (error: any) {
-            console.error(error);
+            appLogger.error('Email send failed', { error: (error as Error)?.message ?? String(error), timestamp: new Date().toISOString() });
         }
     },
 };

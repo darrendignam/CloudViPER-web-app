@@ -1,4 +1,5 @@
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
+import { appLogger } from '../config/logger';
 import { Strategy as LocalStrategy } from 'passport-local';
 import { PassportStatic } from 'passport';
 import db from '../models';
@@ -17,7 +18,7 @@ export default (passport: PassportStatic) => {
  
     passport.use(new LocalStrategy({ usernameField: options.usernameField }, (username, password, done) => {
         if (process.env.NODE_ENV === 'dev' || process.env.NODE_ENV === 'development') {
-            console.log('LocalStrategy:' + username + ' ' + password);
+            appLogger.info('LocalStrategy:' + username + ' ' + password, { timestamp: new Date().toISOString() });
         }
         db.User.findOne({ 
             where: { [options.usernameField]: username } ,

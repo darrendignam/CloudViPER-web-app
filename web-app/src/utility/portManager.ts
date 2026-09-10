@@ -1,4 +1,5 @@
 import * as net from 'net';
+import { appLogger } from '../config/logger';
 import Docker from 'dockerode';
 
 const docker = new Docker({ socketPath: '/var/run/docker.sock' });
@@ -26,7 +27,7 @@ async function getDockerUsedPorts(): Promise<Set<number>> {
             }
         }
     } catch (error) {
-        console.warn('Failed to get Docker port usage:', error);
+        appLogger.warn('Failed to get Docker port usage:', { error: (error as Error)?.message ?? String(error), timestamp: new Date().toISOString() });
         // Continue without Docker port checking if Docker is unavailable
     }
     

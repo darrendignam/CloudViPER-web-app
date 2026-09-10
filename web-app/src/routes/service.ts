@@ -288,7 +288,7 @@ router.get('/team-admin', async (req: Request, res: Response) => {
         
         res.render('service_team_admin', { user: userToJson(fullUser || user!) });
     } catch (error) {
-        console.error('Error fetching full user data:', error);
+        appLogger.error('Error fetching full user data:', { error: (error as Error)?.message ?? String(error), timestamp: new Date().toISOString() });
         res.render('service_team_admin', { user: userToJson(user!) });
     }
 });
@@ -323,7 +323,7 @@ router.get('/team-leader', async (req: Request, res: Response) => {
         
         res.render('service_team_leader', { user: userToJson(fullUser || user!) });
     } catch (error) {
-        console.error('Error fetching full user data:', error);
+        appLogger.error('Error fetching full user data:', { error: (error as Error)?.message ?? String(error), timestamp: new Date().toISOString() });
         res.render('service_team_leader', { user: userToJson(user!) });
     }
 });
@@ -410,7 +410,7 @@ router.get('/new-instance', async (req: Request, res: Response): Promise<void> =
                 createdAt: new Date(),
             });
         } catch (logError) {
-            console.error('Failed to log error to database:', logError);
+            appLogger.error('Failed to log error to database:', { error: (logError as Error)?.message ?? String(logError), timestamp: new Date().toISOString() });
         }
         
         res.status(500).json({ 
@@ -1074,7 +1074,7 @@ router.get('/logs/session', async (req: Request, res: Response) => {
             date: date || new Date().toISOString().split('T')[0]
         });
     } catch (error) {
-        console.error('Error reading session logs:', error);
+        appLogger.error('Error reading session logs:', { error: (error as Error)?.message ?? String(error), timestamp: new Date().toISOString() });
         res.status(500).send({ message: 'Error reading session logs', error });
     }
 });
@@ -1104,7 +1104,7 @@ router.get('/logs/sql', async (req: Request, res: Response) => {
             date: date || new Date().toISOString().split('T')[0]
         });
     } catch (error) {
-        console.error('Error reading SQL logs:', error);
+        appLogger.error('Error reading SQL logs:', { error: (error as Error)?.message ?? String(error), timestamp: new Date().toISOString() });
         res.status(500).send({ message: 'Error reading SQL logs', error });
     }
 });
@@ -1134,7 +1134,7 @@ router.get('/logs/app', async (req: Request, res: Response) => {
             date: date || new Date().toISOString().split('T')[0]
         });
     } catch (error) {
-        console.error('Error reading application logs:', error);
+        appLogger.error('Error reading application logs:', { error: (error as Error)?.message ?? String(error), timestamp: new Date().toISOString() });
         res.status(500).send({ message: 'Error reading application logs', error });
     }
 });
@@ -1178,7 +1178,7 @@ router.get('/logs/dates', async (req: Request, res: Response) => {
             types: logTypes
         });
     } catch (error) {
-        console.error('Error reading log directory:', error);
+        appLogger.error('Error reading log directory:', { error: (error as Error)?.message ?? String(error), timestamp: new Date().toISOString() });
         res.status(500).send({ message: 'Error reading log directory', error });
     }
 });

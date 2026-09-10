@@ -9,7 +9,6 @@ import configAuth from './config/auth';
 import { readIntEnv } from './utility/envConfig';
 
 
-console.log(`DB USER: ${process.env.DB_USER}`);
 
 const app: Application = express();
 const PORT: number = readIntEnv('PORT', 3000);
@@ -48,7 +47,8 @@ if (process.env.NODE_ENV === 'production') {
         
         // Skip HTTPS redirect for internal service requests
         if (isInternalRequest && isServiceEndpoint) {
-            console.log('Bypassing HTTPS redirect for internal request:', {
+            appLogger.debug('Bypassing HTTPS redirect for internal request', {
+                eventType: 'HTTPS Redirect Bypass',
                 ip: req.ip,
                 hostname: req.hostname,
                 path: req.path,
@@ -119,7 +119,6 @@ app.use('/service', require('./routes/service').default);
 //Prod SSL Stuff
 if (process.env.NODE_ENV === 'production') {
     app.use(function (req, res, next) {
-        console.log( req.headers.host );
         if (req.headers.host === DOMAIN_WITHOUT_WWW) {
             res.redirect(302, `https://${DOMAIN_NAME}` + req.originalUrl);
         } else {
@@ -164,6 +163,7 @@ app.use((req, res, next) => {
                 userEmail: user?.email || null
             });
         } catch (err) {
+            // console, not appLogger: this reports appLogger itself failing.
             console.error('Failed to log session event:', err);
         }
     }
@@ -197,6 +197,7 @@ app.use((req, res, next) => {
                 bodySize: req.headers['content-length'] || null
             });
         } catch (err) {
+            // console, not appLogger: this reports appLogger itself failing.
             console.error('Failed to log route access:', err);
         }
     }
@@ -219,7 +220,6 @@ app.use(function(req, res ) {
 
 // Start the server
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
     appLogger.info('Server started successfully', {
         port: PORT,
         nodeEnv: process.env.NODE_ENV,

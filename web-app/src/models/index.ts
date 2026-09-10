@@ -47,7 +47,7 @@ const config: {
 };
 
 // Database connection info
-console.log(`DB Connected: ${database}@${databasehost} as ${username}`);
+appLogger.info(`DB Connected: ${database}@${databasehost} as ${username}`, { timestamp: new Date().toISOString() });
 
 // Log database connection attempt
 appLogger.info('Database connection initialized', {
@@ -98,14 +98,14 @@ if (env !== 'test' || process.env.FORCE_DB_SYNC === 'true') {
     force: env === 'test', // Force recreate tables in test environment
     alter: env !== 'test'  // Use alter in non-test environments
   }).then(() => {
-    console.log(`Database synchronized with ${env === 'test' ? '{ force: true }' : '{ alter: true }'}`);
+    appLogger.info(`Database synchronized with ${env === 'test' ? '{ force: true }' : '{ alter: true }'}`, { timestamp: new Date().toISOString() });
     appLogger.info('Database synchronized successfully', {
       mode: env === 'test' ? 'force' : 'alter',
       env,
       timestamp: new Date().toISOString()
     });
   }).catch((error) => {
-    console.error('Database synchronization failed:', error);
+    appLogger.error('Database synchronization failed:', { error: (error as Error)?.message ?? String(error), timestamp: new Date().toISOString() });
     appLogger.error('Database synchronization failed', {
       error: error.message,
       stack: error.stack,

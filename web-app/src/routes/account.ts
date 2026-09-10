@@ -36,7 +36,7 @@ function userAsJSON(user: any): object {
             role: user.role
         };
     } catch (err) {
-        console.error("Error converting user to JSON: ", err);
+        appLogger.error("Error converting user to JSON: ", { error: (err as Error)?.message ?? String(err), timestamp: new Date().toISOString() });
         return {};
     }
 }
@@ -77,19 +77,10 @@ router.get('/', (req: Request, res: Response) => {
                 break;
 
             default:
-                console.log("DEBUG: Full req.user object:", JSON.stringify(req.user, null, 2));
-                console.log("DEBUG: userAsJSON result:", JSON.stringify(userAsJSON(req.user), null, 2));
                 
                 // Fetch full user data from database to ensure we have email
                 db.User.findByPk(user.id).then((fullUser: any | null) => {
                     if (fullUser) {
-                        console.log("DEBUG: Full user from DB:", JSON.stringify({
-                            id: fullUser.id,
-                            username: fullUser.username,
-                            email: fullUser.email,
-                            role: fullUser.role
-                        }, null, 2));
-                        
                         res.render('user_account_index', {
                             user: userAsJSON(fullUser),
                             alertSuccess: alertSuccess
@@ -102,7 +93,7 @@ router.get('/', (req: Request, res: Response) => {
                         });
                     }
                 }).catch((err: Error) => {
-                    console.error("Error fetching full user data:", err);
+                    appLogger.error("Error fetching full user data:", { error: (err as Error)?.message ?? String(err), timestamp: new Date().toISOString() });
                     // Fallback to session user if DB lookup fails
                     res.render('user_account_index', {
                         user: req.user ? userAsJSON( req.user ) : {},
@@ -138,7 +129,7 @@ router.post('/update', (req: Request, res: Response) => {
                     }
                     res.json(user);
                 }).catch(() => {
-                    console.log("Error finding user by id: ", _userid);
+                    appLogger.error("Error finding user by id: ", { detail: _userid, timestamp: new Date().toISOString() });
                     const response: FindUserResponse = { message: 'Error finding user.' };
                     res.status(500).json(response);
                 });
@@ -325,8 +316,6 @@ router.put('/users/:id/role', async (req: Request, res: Response): Promise<void>
             }
         }
 
-        console.error(req.body);
-        console.error(`${userId} - ${newRole}`);
 
         await db.User.update({ role: newRole }, { where: { id: userId } });
         
@@ -442,7 +431,7 @@ router.post('/users/invite', async (req: Request, res: Response): Promise<void> 
                 timestamp: new Date().toISOString()
             });
         } catch (emailError) {
-            console.error('Error sending invitation email:', emailError);
+            appLogger.error('Error sending invitation email:', { error: (emailError as Error)?.message ?? String(emailError), timestamp: new Date().toISOString() });
             
             // Log email failure
             appLogger.error('Invitation email failed', {
@@ -481,7 +470,7 @@ router.get('/sessions', (req: Request, res: Response) => {
 
         connection.query(query, (error, results: mysql.RowDataPacket[]) => {
           if (error) {
-            console.error('Error retrieving sessions:', error);
+            appLogger.error('Error retrieving sessions:', { error: (error as Error)?.message ?? String(error), timestamp: new Date().toISOString() });
             return res.status(500).send({ message: 'Error retrieving sessions', error });
           }
       
@@ -528,7 +517,7 @@ router.delete('/sessions/:sessionId', (req: Request, res: Response): void => {
 
         connection.query(query, [sessionId], (error, results: mysql.OkPacket) => {
             if (error) {
-                console.error('Error deleting session:', error);
+                appLogger.error('Error deleting session:', { error: (error as Error)?.message ?? String(error), timestamp: new Date().toISOString() });
                 res.status(500).json({ 
                     success: false, 
                     message: 'Error deleting session', 
@@ -570,7 +559,7 @@ router.delete('/sessions', (req: Request, res: Response): void => {
         
         connection.query(countQuery, (countError, countResults: mysql.RowDataPacket[]) => {
             if (countError) {
-                console.error('Error counting sessions:', countError);
+                appLogger.error('Error counting sessions:', { error: (countError as Error)?.message ?? String(countError), timestamp: new Date().toISOString() });
                 res.status(500).json({ 
                     success: false, 
                     message: 'Error counting sessions', 
@@ -595,7 +584,7 @@ router.delete('/sessions', (req: Request, res: Response): void => {
             
             connection.query(deleteQuery, (deleteError, deleteResults: mysql.OkPacket) => {
                 if (deleteError) {
-                    console.error('Error revoking all sessions:', deleteError);
+                    appLogger.error('Error revoking all sessions:', { error: (deleteError as Error)?.message ?? String(deleteError), timestamp: new Date().toISOString() });
                     res.status(500).json({ 
                         success: false, 
                         message: 'Error revoking all sessions', 
@@ -677,7 +666,7 @@ router.post('/login', passport.authenticate('local', { failureRedirect: '/accoun
             
             res.redirect('/account');
         } else {
-            console.log("Login failed... redirecting....");
+            appLogger.info("Login failed... redirecting....", { timestamp: new Date().toISOString() });
             
             // Log failed login attempt
             appLogger.warn('Login attempt failed', {
@@ -751,8 +740,6 @@ router.post('/reset-password', async (req: Request, res: Response): Promise<void
     const hashedToken = crypto.createHash('sha256').update(plainToken).digest('hex'); // Hash for storage
     const expiryTime = new Date(Date.now() + 3600000); // 1 hour from now
     
-    console.log(`🔐 Password reset request for: ${email}`);
-    console.log(`🔗 Reset URL: http://localhost:3000/account/reset-token/${plainToken}`);
 
     // Log password reset request
     appLogger.info('Password reset requested', {
@@ -766,7 +753,7 @@ router.post('/reset-password', async (req: Request, res: Response): Promise<void
     try {
         const user = await db.User.findOne({ where: { email } });
         if (!user) {
-            console.log(`❌ No user found with email: ${email}`);
+            appLogger.info(`No user found with email: ${email}`, { timestamp: new Date().toISOString() });
             
             // Log failed reset attempt (user not found)
             appLogger.warn('Password reset request for non-existent user', {
@@ -781,7 +768,7 @@ router.post('/reset-password', async (req: Request, res: Response): Promise<void
             return;
         }
 
-        console.log(`✅ User found: ${user.username} (ID: ${user.id})`);
+        appLogger.info(`User found: ${user.username} (ID: ${user.id})`, { timestamp: new Date().toISOString() });
 
         try {
             await user.update({
@@ -789,7 +776,7 @@ router.post('/reset-password', async (req: Request, res: Response): Promise<void
                 resetPasswordExpires: expiryTime,
             });
             
-            console.log(`✅ Reset token generated and stored for ${user.username}`);
+            appLogger.info(`Reset token generated and stored for ${user.username}`, { timestamp: new Date().toISOString() });
             
             // Log successful token generation
             appLogger.info('Password reset token generated', {
@@ -803,7 +790,7 @@ router.post('/reset-password', async (req: Request, res: Response): Promise<void
             
             try {
                 await emailRelay.sendResetEmail(email, user.username, plainToken); // Send plain token via email
-                console.log(`📧 Reset email sent to: ${email}`);
+                appLogger.info(`Reset email sent to: ${email}`, { timestamp: new Date().toISOString() });
                 
                 // Log successful email sending
                 appLogger.info('Password reset email sent', {
@@ -814,7 +801,7 @@ router.post('/reset-password', async (req: Request, res: Response): Promise<void
                     timestamp: new Date().toISOString()
                 });
             } catch (emailError) {
-                console.error('❌ Error sending reset email:', emailError);
+                appLogger.error('Error sending reset email:', { error: (emailError as Error)?.message ?? String(emailError), timestamp: new Date().toISOString() });
                 
                 // Log email failure
                 appLogger.error('Password reset email failed', {
@@ -830,7 +817,7 @@ router.post('/reset-password', async (req: Request, res: Response): Promise<void
             
             res.render('user_account_post_reset_password');
         } catch (err) {
-            console.log("❌ Error updating user: ", err);
+            appLogger.error("Error updating user: ", { error: (err as Error)?.message ?? String(err), timestamp: new Date().toISOString() });
             
             // Log database error
             appLogger.error('Password reset token storage failed', {
@@ -845,7 +832,7 @@ router.post('/reset-password', async (req: Request, res: Response): Promise<void
             res.render('user_account_post_reset_password');
         }
     } catch (err) {
-        console.log("❌ Error finding user: ", err);
+        appLogger.error("Error finding user: ", { error: (err as Error)?.message ?? String(err), timestamp: new Date().toISOString() });
         
         // Log database error
         appLogger.error('Password reset user lookup failed', {
@@ -863,7 +850,7 @@ router.get('/reset-token/:token', (req: Request, res: Response) => {
     const plainToken = req.params.token;
     const hashedToken = crypto.createHash('sha256').update(plainToken).digest('hex'); // Hash the token for database lookup
     
-    console.log(`🔍 Token validation attempt: ${plainToken.substring(0, 8)}...`);
+    appLogger.info(`Token validation attempt: ${plainToken.substring(0, 8)}...`, { timestamp: new Date().toISOString() });
     
     interface ResetTokenResponse {
         message?: string;
@@ -876,20 +863,20 @@ router.get('/reset-token/:token', (req: Request, res: Response) => {
         } 
     }).then((user: any | null) => {
         if (!user) {
-            console.log(`❌ Invalid or expired token: ${plainToken.substring(0, 8)}...`);
+            appLogger.warn(`Invalid or expired token: ${plainToken.substring(0, 8)}...`, { timestamp: new Date().toISOString() });
             
             const response: ResetTokenResponse = { message: 'Password reset token is invalid or has expired.' };
             res.status(400).json(response);
             return;
         }
         
-        console.log(`✅ Valid token for user: ${user.username}`);
+        appLogger.info(`Valid token for user: ${user.username}`, { timestamp: new Date().toISOString() });
         
         res.render('user_account_get_reset_token', {
             token: plainToken, // Pass plain token to form for submission
         });
     }).catch((err: Error) => {
-        console.log("❌ Error validating token: ", err);
+        appLogger.error("Error validating token: ", { error: (err as Error)?.message ?? String(err), timestamp: new Date().toISOString() });
         const response: ResetTokenResponse = { message: 'Error finding user.' };
         res.status(500).json(response);
     });
@@ -899,7 +886,7 @@ router.post('/reset-token', async (req: Request, res: Response): Promise<void> =
     const plainToken = req.body.token;
     const hashedToken = crypto.createHash('sha256').update(plainToken).digest('hex'); // Hash submitted token to compare
     
-    console.log(`🔐 Password reset submission for token: ${plainToken.substring(0, 8)}...`);
+    appLogger.info(`Password reset submission for token: ${plainToken.substring(0, 8)}...`, { timestamp: new Date().toISOString() });
     
     interface ResetTokenResponse {
         message?: string;
@@ -914,13 +901,13 @@ router.post('/reset-token', async (req: Request, res: Response): Promise<void> =
         });
         
         if (!user) {
-            console.log(`❌ Invalid token for password reset: ${plainToken.substring(0, 8)}...`);
+            appLogger.warn(`Invalid token for password reset: ${plainToken.substring(0, 8)}...`, { timestamp: new Date().toISOString() });
             const response: ResetTokenResponse = { message: 'Password reset token is invalid or has expired.' };
             res.status(400).json(response);
             return;
         }
 
-        console.log(`✅ Valid token, updating password for: ${user.username}`);
+        appLogger.info(`Valid token, updating password for: ${user.username}`, { timestamp: new Date().toISOString() });
 
         try {
             await user.setPassword(req.body.password);
@@ -928,27 +915,27 @@ router.post('/reset-token', async (req: Request, res: Response): Promise<void> =
             user.resetPasswordExpires = undefined; // Clear the expiration
             await user.save();
 
-            console.log(`✅ Password updated successfully for: ${user.username}`);
+            appLogger.info(`Password updated successfully for: ${user.username}`, { timestamp: new Date().toISOString() });
 
             // Log the user in
             req.login(user, (err: Error) => {
                 if (err) {
-                    console.log("❌ Error logging in user after password reset: ", err);
+                    appLogger.error("Error logging in user after password reset: ", { error: (err as Error)?.message ?? String(err), timestamp: new Date().toISOString() });
                     const response: ResetTokenResponse = { message: 'Error logging in user.' };
                     res.status(500).json(response);
                     return;
                 }
-                console.log(`✅ User ${user.username} logged in after password reset`);
+                appLogger.info(`User ${user.username} logged in after password reset`, { timestamp: new Date().toISOString() });
                 res.redirect('/account');
             });
         } catch (err) {
-            console.log("❌ Error setting new password: ", err);
+            appLogger.error("Error setting new password: ", { error: (err as Error)?.message ?? String(err), timestamp: new Date().toISOString() });
             const response: ResetTokenResponse = { message: 'Error setting new password.' };
             res.status(500).json(response);
             return;
         }
     } catch (err) {
-        console.log("❌ Error during password reset: ", err);
+        appLogger.error("Error during password reset: ", { error: (err as Error)?.message ?? String(err), timestamp: new Date().toISOString() });
         const response: ResetTokenResponse = { message: 'Error finding user.' };
         res.status(500).json(response);
     }
@@ -983,8 +970,6 @@ router.get('/debug-tokens', async (req: Request, res: Response) => {
                 };
             });
             
-            console.log('=== DEBUG TOKENS ENDPOINT ===');
-            console.log(`Found ${usersWithTokens.length} users with reset tokens`);
             
             res.json({
                 currentTime: now,

@@ -4,6 +4,7 @@ import { Sequelize, DataTypes, Model } from 'sequelize';
 import crypto from 'crypto';
 import util from 'util';
 import { UserRole, isValidRole } from '../types/UserRole';
+import { appLogger } from '../config/logger';
 
 /*
 ROLES:
@@ -157,7 +158,7 @@ export default (sequelize: Sequelize) => {
                 }
                 return user.authenticate(password);
             } catch (error) {
-                console.error("Authentication Error:", error);
+                appLogger.error("Authentication Error:", { error: (error as Error)?.message ?? String(error), timestamp: new Date().toISOString() });
                 return false;
             }
         }
