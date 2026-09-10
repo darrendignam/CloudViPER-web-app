@@ -1,6 +1,6 @@
 {
   "name": "viper-cloud-web-gui",
-  "version": "1.0.4",
+  "version": "2.0.0-alpha.0",
   "description": "Container orchestrator app for the Cloud Viper project",
   "main": "app.js",
   "scripts": {
