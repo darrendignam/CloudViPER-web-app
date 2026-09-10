@@ -30,9 +30,9 @@ describe('UserRole Types and Utilities', () => {
             expect(UserRole.ADMIN).toBe('admin');
         });
 
-        it('should have exactly 5 roles defined', () => {
+        it('should have exactly 7 roles defined', () => {
             const roleCount = Object.keys(UserRole).length;
-            expect(roleCount).toBe(5);
+            expect(roleCount).toBe(7);
         });
 
         it('should have all roles as string values', () => {
@@ -80,7 +80,7 @@ describe('UserRole Types and Utilities', () => {
             expect(RoleHierarchy[UserRole.TESTING]).toBe(1);
             expect(RoleHierarchy[UserRole.MEMBER]).toBe(1);
             expect(RoleHierarchy[UserRole.SUBSCRIBER]).toBe(2);
-            expect(RoleHierarchy[UserRole.ADMIN]).toBe(3);
+            expect(RoleHierarchy[UserRole.ADMIN]).toBe(4);
         });
 
         it('should have ADMIN as highest hierarchy level', () => {
@@ -174,7 +174,7 @@ describe('UserRole Types and Utilities', () => {
         it('should return an array of all UserRole values', () => {
             const allRoles = getAllRoles();
             expect(Array.isArray(allRoles)).toBe(true);
-            expect(allRoles).toHaveLength(5);
+            expect(allRoles).toHaveLength(7);
         });
 
         it('should contain all UserRole enum values', () => {

@@ -253,7 +253,7 @@ describe('Account Routes Error Coverage Tests', () => {
 
       const response = await request(tempApp).get('/account/users');
       expect(response.status).toBe(403);
-      expect(response.body.message).toBe('Error 3');
+      expect(response.body.message).toBe('Insufficient permissions');
     });
   });
 
@@ -309,7 +309,7 @@ describe('Account Routes Error Coverage Tests', () => {
         .send({ role: UserRole.MEMBER });
 
       expect(response.status).toBe(403);
-      expect(response.body.message).toBe('Error updating role');
+      expect(response.body.message).toBe('Unauthorized');
     });
   });
 

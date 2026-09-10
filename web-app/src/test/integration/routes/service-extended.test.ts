@@ -624,7 +624,7 @@ describe('Service Routes - Extended Coverage', () => {
                 .get('/service/screenshot/test-instance-uuid')
                 .expect(403);
 
-            expect(response.body).toHaveProperty('error', 'Unauthorized - can only view own instances');
+            expect(response.body).toHaveProperty('error', 'Unauthorized - can only view own or team instances');
         });
 
         it('should handle no screenshots available', async () => {
@@ -693,7 +693,7 @@ describe('Service Routes - Extended Coverage', () => {
                 .get('/service/screenshots/test-instance-uuid')
                 .expect(403);
 
-            expect(response.body).toHaveProperty('error', 'Unauthorized - can only view own instances');
+            expect(response.body).toHaveProperty('error', 'Unauthorized - can only view own or team instances');
         });
     });
 
@@ -744,7 +744,7 @@ describe('Service Routes - Extended Coverage', () => {
                 .get('/service/activity/test-instance-uuid')
                 .expect(403);
 
-            expect(response.body).toHaveProperty('error', 'Unauthorized - can only view own instances');
+            expect(response.body).toHaveProperty('error', 'Unauthorized - can only view own or team instances');
         });
     });
 

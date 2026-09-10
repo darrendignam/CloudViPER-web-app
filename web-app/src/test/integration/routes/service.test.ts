@@ -259,12 +259,10 @@ describe('Service Routes', () => {
             State: { Status: 'running' },
             Config: { Image: 'test-image' }
         });
-        mockContainer.stop.mockImplementation((callback) => {
-            callback(null, 'stopped');
-        });
-        mockContainer.remove.mockImplementation((callback) => {
-            callback(null, 'removed');
-        });
+        // DockerContainerService awaits these, so they resolve rather than
+        // taking a callback.
+        mockContainer.stop.mockResolvedValue(undefined);
+        mockContainer.remove.mockResolvedValue(undefined);
 
         // Setup Docker instance mocks
         mockDockerInstance.createContainer.mockResolvedValue(mockContainer);
@@ -622,97 +620,106 @@ describe('Service Routes', () => {
     });
 
     describe('GET /terminate-instance/:containerId', () => {
+        let mockInstanceRow: any;
+
         beforeEach(() => {
-            // Mock instance lookup
-            (db.ViperInstance.findOne as jest.Mock) = jest.fn().mockResolvedValue({
+            // A Sequelize instance, not a plain object: terminateInstance calls
+            // instance.update to soft delete before touching the container.
+            mockInstanceRow = {
+                id: 7,
                 dockerid: 'test-container-id',
-                owner: 1, // matches admin user id
-                uuid: 'test-uuid'
-            });
-            // Mock destroy method
-            (db.ViperInstance.destroy as jest.Mock) = jest.fn().mockResolvedValue(1);
+                owner: 1,
+                uuid: 'test-uuid',
+                name: 'viper-cloud-test-uuid',
+                masterToken: null,
+                logs: [],
+                update: jest.fn().mockResolvedValue(undefined)
+            };
+            (db.ViperInstance.findOne as jest.Mock) = jest.fn().mockResolvedValue(mockInstanceRow);
         });
 
         it('should successfully terminate container', async () => {
             const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
 
             const response = await request(testApp).get('/service/terminate-instance/test-container-id');
-            
+
             expect(response.status).toBe(200);
             expect(response.body).toEqual({
                 success: true,
-                message: "Instance terminated successfully",
-                details: {
-                    STOP: { message: "Container stopped successfully" },
-                    REMOVE: { message: "Container removed successfully" },
-                    DATABASE: { message: "Database entry removed successfully" }
-                }
+                message: 'Instance terminated successfully'
             });
-
             expect(mockDockerInstance.getContainer).toHaveBeenCalledWith('test-container-id');
             expect(mockContainer.stop).toHaveBeenCalled();
             expect(mockContainer.remove).toHaveBeenCalled();
-            expect(db.ViperInstance.destroy).toHaveBeenCalledWith({
-                where: { dockerid: 'test-container-id' }
-            });
         }, 10000);
 
-        it('should handle container stop error', async () => {
-            mockContainer.stop.mockImplementation((callback: (err: Error | null, data: any) => void) => {
-                callback(new Error('Stop failed'), null);
-            });
+        it('should soft delete the row rather than destroying it', async () => {
+            const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
+
+            await request(testApp).get('/service/terminate-instance/test-container-id');
+
+            expect(mockInstanceRow.update).toHaveBeenCalledWith(
+                expect.objectContaining({ status: 'deleted' })
+            );
+        }, 10000);
+
+        it('should still report success when the container has already gone', async () => {
+            mockContainer.stop.mockRejectedValue(new Error('No such container'));
 
             const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
             const response = await request(testApp).get('/service/terminate-instance/test-container-id');
-            
+
             expect(response.status).toBe(200);
-            expect(response.body.details['STOP-ERROR']).toBeDefined();
+            expect(response.body.success).toBe(true);
         }, 10000);
 
-        it('should handle container remove error', async () => {
-            mockContainer.remove.mockImplementation((callback: (err: Error | null, data: any) => void) => {
-                callback(new Error('Remove failed'), null);
-            });
+        it('should still report success when removal fails', async () => {
+            mockContainer.remove.mockRejectedValue(new Error('Remove failed'));
 
             const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
             const response = await request(testApp).get('/service/terminate-instance/test-container-id');
-            
+
             expect(response.status).toBe(200);
-            expect(response.body.details['REMOVE-ERROR']).toBeDefined();
+            expect(response.body.success).toBe(true);
         }, 10000);
 
-        it('should handle instance not found in database', async () => {
-            (db.ViperInstance.destroy as jest.Mock).mockResolvedValue(0); // 0 rows affected means not found
+        it('should tear down an orphaned container for an admin', async () => {
+            (db.ViperInstance.findOne as jest.Mock).mockResolvedValue(null);
 
             const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
             const response = await request(testApp).get('/service/terminate-instance/test-container-id');
-            
+
             expect(response.status).toBe(200);
-            // Should still stop and remove container even if DB record not found
+            expect(response.body.message).toBe('Orphaned container removed');
             expect(mockContainer.stop).toHaveBeenCalled();
             expect(mockContainer.remove).toHaveBeenCalled();
-            expect(response.body).toEqual({
-                success: true,
-                message: "Instance terminated successfully",
-                details: {
-                    STOP: { message: "Container stopped successfully" },
-                    REMOVE: { message: "Container removed successfully" },
-                    DATABASE: { message: "Database entry removed successfully" }
-                }
-            });
         }, 10000);
 
-        it('should handle database error', async () => {
-            const dbError = new Error('Database error');
-            (db.ViperInstance.destroy as jest.Mock).mockRejectedValue(dbError);
+        it('should refuse an orphaned container for a non-admin, who has no ownership to prove', async () => {
+            (db.ViperInstance.findOne as jest.Mock).mockResolvedValue(null);
+
+            const testApp = createTestApp({ id: 2, username: 'member', email: 'member@test.com', role: UserRole.MEMBER });
+            const response = await request(testApp).get('/service/terminate-instance/test-container-id');
+
+            expect(response.status).toBe(404);
+            expect(mockContainer.remove).not.toHaveBeenCalled();
+        }, 10000);
+
+        it('should reject a non-owner with 403 and leave the container running', async () => {
+            const testApp = createTestApp({ id: 99, username: 'other', email: 'other@test.com', role: UserRole.MEMBER });
+            const response = await request(testApp).get('/service/terminate-instance/test-container-id');
+
+            expect(response.status).toBe(403);
+            expect(mockContainer.remove).not.toHaveBeenCalled();
+        }, 10000);
+
+        it('should surface a database failure as a server error', async () => {
+            (db.ViperInstance.findOne as jest.Mock).mockRejectedValue(new Error('Database error'));
 
             const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
             const response = await request(testApp).get('/service/terminate-instance/test-container-id');
-            
+
             expect(response.status).toBe(500);
-            expect(response.body.success).toBe(false);
-            expect(response.body.message).toBe('Partial termination - some operations failed');
-            expect(response.body.details['DATABASE-ERROR']).toBeDefined();
         }, 10000);
     });
 
@@ -1111,8 +1118,8 @@ describe('Service Routes', () => {
                     expect(response.body.error).toBe('Invalid container ID provided');
                 });
 
-                it('should return 404 for non-existent instance', async () => {
-                    const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
+                it('should return 404 for a non-existent instance when the caller is not an admin', async () => {
+                    const testApp = createTestApp({ id: 2, username: 'member', email: 'member@test.com', role: UserRole.MEMBER });
 
                     (db.ViperInstance.findOne as jest.Mock).mockResolvedValue(null);
 
@@ -1137,7 +1144,7 @@ describe('Service Routes', () => {
                         .get('/service/terminate-instance/valid-container-id');
 
                     expect(response.status).toBe(403);
-                    expect(response.body.error).toBe('Unauthorized - you can only terminate your own instances');
+                    expect(response.body.error).toBe('Unauthorized - can only terminate own instances');
                 });
             });
 
@@ -1243,7 +1250,7 @@ describe('Service Routes', () => {
                     });
                 });
 
-                it('should return 404 for non-existent instance', async () => {
+                it('should return 404 for a non-existent instance when the caller is not an admin', async () => {
                     const testApp = createTestApp();
                     
                     (db.ViperInstance.findOne as jest.Mock).mockResolvedValue(null);
@@ -1379,10 +1386,10 @@ describe('Service Routes', () => {
                         .get('/service/screenshot/test-instance-uuid');
 
                     expect(response.status).toBe(403);
-                    expect(response.body.error).toBe('Unauthorized - can only view own instances');
+                    expect(response.body.error).toBe('Unauthorized - can only view own or team instances');
                 });
 
-                it('should return 404 for non-existent instance', async () => {
+                it('should return 404 for a non-existent instance when the caller is not an admin', async () => {
                     const testApp = createTestApp({ id: 2, username: 'member', email: 'member@test.com', role: UserRole.MEMBER });
                     
                     (db.ViperInstance.findOne as jest.Mock).mockResolvedValue(null);
