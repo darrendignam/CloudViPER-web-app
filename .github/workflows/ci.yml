@@ -1,0 +1,68 @@
+name: CI
+
+# The image publish workflow only runs on version tags and never type-checks or
+# tests, which is why a broken provisioning path and seventeen failing tests
+# survived unnoticed. This runs on everything.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  test:
+    name: Type-check and test
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: web-app
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web-app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Test
+        run: npx jest --ci --forceExit
+
+      - name: Build
+        run: npm run build
+
+  provisioning-scripts:
+    name: Provisioning scripts reach the image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Build the web-app image
+        run: docker build -t cloudviper-web:ci -f Dockerfile .
+
+      # The Dockerfile copied web-app/scripts, which holds no monitoring
+      # scripts, so instances started with no monitor and the failure was
+      # downgraded to a warning. Assert the scripts are present and that the
+      # resolver finds them, rather than trusting the COPY lines.
+      - name: Verify the monitoring scripts resolve inside the image
+        run: |
+          docker run --rm cloudviper-web:ci node -e "
+            const { getScriptsDirectory, validateRequiredScripts } = require('/usr/src/app/dist/utility/scriptManager');
+            const result = validateRequiredScripts();
+            console.log('resolved:', getScriptsDirectory());
+            console.log('valid:', JSON.stringify(result));
+            if (!result.valid) {
+              throw new Error('Missing provisioning scripts: ' + result.missing.join(', '));
+            }
+          "
