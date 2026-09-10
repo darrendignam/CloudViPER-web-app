@@ -9,7 +9,7 @@ interface ViperInstanceAttributes {
     dockerid: string;
     name: string;
     url: string;
-    kasmvncPassword: string;
+    masterToken: string;
     statusKey: string;
     createdAt?: Date;
     updatedAt?: Date;
@@ -30,7 +30,7 @@ export default (sequelize: Sequelize) => {
         public dockerid!: string;
         public name!: string;
         public url!: string;
-        public kasmvncPassword!: string;
+        public masterToken!: string;
         public statusKey!: string;
         public createdAt?: Date;
         public updatedAt?: Date;
@@ -69,7 +69,7 @@ export default (sequelize: Sequelize) => {
         dockerid: { type: DataTypes.STRING, allowNull: true },
         name: { type: DataTypes.STRING, allowNull: true },
         url: { type: DataTypes.STRING, allowNull: true },
-        kasmvncPassword: { type: DataTypes.STRING, allowNull: true },
+        masterToken: { type: DataTypes.STRING, allowNull: true },
         statusKey: { type: DataTypes.STRING, allowNull: true },
         createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
         status: { type: DataTypes.STRING, allowNull: false, defaultValue: 'initilising' },

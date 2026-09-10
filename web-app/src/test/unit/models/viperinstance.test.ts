@@ -41,7 +41,7 @@ describe('ViperInstance Model', () => {
       dockerid: { type: 'STRING' },
       name: { type: 'STRING' },
       url: { type: 'STRING' },
-      kasmvncPassword: { type: 'STRING' },
+      masterToken: { type: 'STRING' },
       statusKey: { type: 'STRING' },
       createdAt: { type: 'DATE' },
       updatedAt: { type: 'DATE' },
@@ -63,7 +63,7 @@ describe('ViperInstance Model', () => {
     expect(attributes.dockerid).toBeDefined();
     expect(attributes.name).toBeDefined();
     expect(attributes.url).toBeDefined();
-    expect(attributes.kasmvncPassword).toBeDefined();
+    expect(attributes.masterToken).toBeDefined();
     expect(attributes.statusKey).toBeDefined();
     expect(attributes.createdAt).toBeDefined();
     expect(attributes.updatedAt).toBeDefined();
@@ -78,7 +78,7 @@ describe('ViperInstance Model', () => {
       dockerid: 'docker-123',
       name: 'Test Viper Instance',
       url: 'https://test.example.com',
-      kasmvncPassword: 'testpassword123',
+      masterToken: 'test-master-token-123',
       statusKey: 'status-key-456'
     };
 
@@ -100,7 +100,7 @@ describe('ViperInstance Model', () => {
     expect(viperInstance.dockerid).toBe(viperInstanceData.dockerid);
     expect(viperInstance.name).toBe(viperInstanceData.name);
     expect(viperInstance.url).toBe(viperInstanceData.url);
-    expect(viperInstance.kasmvncPassword).toBe(viperInstanceData.kasmvncPassword);
+    expect(viperInstance.masterToken).toBe(viperInstanceData.masterToken);
     expect(viperInstance.statusKey).toBe(viperInstanceData.statusKey);
     expect(viperInstance.createdAt).toBeDefined();
     expect(viperInstance.updatedAt).toBeDefined();

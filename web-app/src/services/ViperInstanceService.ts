@@ -8,11 +8,15 @@ import { appLogger } from '../config/logger';
 import { UserRole } from '../types/UserRole';
 import { readAndProcessScript, validateRequiredScripts } from '../utility/scriptManager';
 import containerService from './ContainerService';
+import selkiesControlPlane, { SelkiesRole } from './SelkiesControlPlane';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
 const DOMAIN_NAME = process.env.DOMAIN_NAME || 'cloudviper.org';
+const VIPER_IMAGE = process.env.VIPER_IMAGE || 'ghcr.io/darrendignam/opf-cloud-viper:2.0.0-alpha';
+const TEST_CORPUS_HOST_PATH = process.env.TEST_CORPUS_HOST_PATH
+  || '/var/viper-docker-project/volumes/test-corpus/test-root/corpora';
 
 // Interface for the user type used in service routes
 export interface ServiceUser {
@@ -35,7 +39,7 @@ class ViperInstanceService {
   async createInstance(user: ServiceUser): Promise<any> {
     const ownerId = user.id;
     const instanceUUID = helperFunctions.generateRandomString(12);
-    const kasmvncPassword = helperFunctions.generateRandomString(12);
+    const masterToken = helperFunctions.generateSessionToken();
     const statusKey = helperFunctions.generateRandomString(12);
     const instanceURL = `${instanceUUID}.${process.env.APP_HOST}`;
     const containerName = `viper-cloud-${instanceUUID}`;
@@ -55,7 +59,11 @@ class ViperInstanceService {
       "VIRTUAL_HOST=" + instanceURL,
       "LETSENCRYPT_HOST=" + instanceURL,
       "LETSENCRYPT_EMAIL=sysadmin@openpreservation.org",
-      "PASSWORD=" + kasmvncPassword,
+      "SELKIES_MASTER_TOKEN=" + masterToken,
+      "SELKIES_ENABLE_SHARING=false",
+      "SELKIES_ENABLE_COLLAB=false",
+      "SELKIES_ENABLE_SHARED=false",
+      "TITLE=ViPER",
       "PUID=1000",
       "PGID=1000",
       "ACME_PRE_HOOK=curl " + (process.env.SERVICE_URL || (process.env.NODE_ENV === 'production' ? 
@@ -66,18 +74,23 @@ class ViperInstanceService {
           `http://localhost:3000`)) + "/service/set-status-instance/"+statusKey+"/active",
     ];
     
-    console.log('Container Environment Variables:', envVars);
+    appLogger.debug('Container environment prepared', {
+      eventType: 'Container Env Prepared',
+      instanceUUID,
+      variables: envVars.map((entry) => entry.split('=')[0]),
+      timestamp: new Date().toISOString()
+    });
 
     try {
       // Find an available port for development, production uses reverse proxy
       const availablePort = process.env.NODE_ENV === 'dev' ? await getAvailablePort(3010) : 3000;
 
       const containerOptions: any = {
-        Image: 'darrenopf/opf-cloud-viper:docker-0.0.17',
+        Image: VIPER_IMAGE,
         name: containerName,
         HostConfig: {
           ShmSize: 1024 * 1024 * 1024,
-          Binds: ['/var/viper-docker-project/volumes/test-corpus/test-root/corpora:/config/test-corpus:ro'],
+          Binds: [`${TEST_CORPUS_HOST_PATH}:/config/test-corpus:ro`],
           ...(process.env.NODE_ENV === 'dev' && { PortBindings: { 
             '3000/tcp': [{ HostPort: `${availablePort}` }],
             '3001/tcp': [] // Empty binding to prevent null value
@@ -115,7 +128,7 @@ class ViperInstanceService {
         dockerid: container.id,
         name: containerName,
         url: instanceURL,
-        kasmvncPassword: kasmvncPassword,
+        masterToken: masterToken,
         statusKey: statusKey,
         owner: ownerId,
         status: 'created',
@@ -285,18 +298,10 @@ class ViperInstanceService {
    */
   private async removeSudoAccess(container: any, instanceUUID: string): Promise<void> {
     try {
-      // Remove sudoers file
-      await containerService.execInContainer(container.id, ['rm', '-f', '/etc/sudoers.d/abc']);
-      
-      appLogger.info('Sudoers file removed successfully', {
-        eventType: 'Security Hardening',
-        instanceUUID,
-        containerId: container.id,
-        action: 'sudoers_removal',
-        timestamp: new Date().toISOString()
-      });
-      
-      // Remove user from sudo group
+      // ViPER 2.0 no longer ships /etc/sudoers.d/abc and sudo already prompts for
+      // a password, so only the group membership is left to strip. The image also
+      // places abc in the docker group; that is inert while no socket is mounted,
+      // and instance containers must never mount one.
       await containerService.execInContainer(container.id, ['gpasswd', '-d', 'abc', 'sudo']);
       
       appLogger.info('User removed from sudo group successfully', {
@@ -325,9 +330,10 @@ class ViperInstanceService {
       // Update package lists
       await containerService.execInContainer(container.id, ['apt-get', 'update']);
       
-      // Install required packages
-      await containerService.execInContainer(container.id, 
-        ['apt-get', 'install', '-y', 'scrot', 'xdotool', 'curl', 'bc', 'xinput']
+      // xdotool and curl ship in the ViPER 2.0 image; these three do not. Ask the
+      // image to carry them and this whole step can go.
+      await containerService.execInContainer(container.id,
+        ['apt-get', 'install', '-y', 'scrot', 'bc', 'xinput']
       );
       
       appLogger.info('Monitoring dependencies installed', {
@@ -385,33 +391,10 @@ class ViperInstanceService {
         timestamp: new Date().toISOString()
       });
 
-      // Create systemd service
-      const systemdService = readAndProcessScript('viper-monitor.service', {
-        INSTANCE_UUID: instanceUUID,
-        SERVICE_URL: serviceUrl,
-        DOMAIN_NAME,
-        STATUS_KEY: statusKey
-      });
-
-      // Create systemd directory
-      await containerService.execInContainer(container.id, ['mkdir', '-p', '/config/.config/systemd/user']);
-      
-      // Create service file
-      await this.createFileInContainer(container, '/config/.config/systemd/user/viper-monitor.service', systemdService);
-      
-      // Set ownership
-      await containerService.execInContainer(container.id, ['chown', '-R', 'abc:abc', '/config/.config']);
-      
-      // Set permissions
-      await containerService.execInContainer(container.id, ['chmod', '444', '/config/.config/systemd/user/viper-monitor.service']);
-      
-      appLogger.info('Monitoring systemd service created', {
-        eventType: 'Monitoring Setup',
-        instanceUUID,
-        containerId: container.id,
-        action: 'systemd_service_created',
-        timestamp: new Date().toISOString()
-      });
+      // No systemd unit is written. Init in the LinuxServer images is s6-svscan
+      // and /run/systemd/system does not exist, so a user unit would never be
+      // read. The XDG autostart entry below is what starts the monitor, and MATE
+      // honours it from abc's home at /config/.config/autostart.
 
       // Create autostart entry
       const autostartEntry = readAndProcessScript('viper-monitor.desktop', {
@@ -495,25 +478,21 @@ class ViperInstanceService {
    */
   private async createTestCorpusShortcut(container: any, instanceUUID: string): Promise<void> {
     try {
-      // Create Desktop directory
       await containerService.execInContainer(container.id, ['mkdir', '-p', '/config/Desktop']);
-      
-      // Desktop shortcut content
-      const desktopShortcut = `[Desktop Entry]
-Version=1.0
-Type=Link
-Name=Test Corpus
-Comment=Digital preservation test files
-Icon=folder
-URL=file:///config/test-corpus
-`;
 
-      // Create desktop shortcut file
-      await this.createFileInContainer(container, '/config/Desktop/test-corpus.desktop', desktopShortcut);
-      
-      // Set ownership
-      await containerService.execInContainer(container.id, ['chown', '-R', 'abc:abc', '/config/Desktop']);
-      
+      // A symlink rather than a .desktop launcher: Caja refuses to open a
+      // launcher it has not been told to trust, and that trust flag is per-user
+      // metadata which ViPER's own post-install sets before this code runs. A
+      // symlink opens on double click with no flag and accepts dropped files.
+      //
+      // Created as abc rather than created as root and chowned: chown -h on a
+      // symlink is silently a no-op here, which would leave it owned by root
+      // while ViPER's own desktop links are owned by abc.
+      await containerService.execInContainer(container.id,
+        ['ln', '-sfn', '/config/test-corpus', '/config/Desktop/Test Corpus'],
+        { User: 'abc' }
+      );
+
       appLogger.info('Test corpus desktop shortcut created', {
         eventType: 'Container Setup',
         instanceUUID,
@@ -591,6 +570,65 @@ URL=file:///config/test-corpus
   /**
    * Terminates a Viper instance
    */
+  /**
+   * Mint a fresh Selkies session token and register it as the instance's only
+   * valid credential. Any previously issued link stops working, so relaunching
+   * revokes the old one by construction.
+   */
+  async grantInstanceAccess(instance: any, role: SelkiesRole = 'controller'): Promise<string> {
+    if (!instance.masterToken) {
+      throw new Error('Instance has no master token - it predates Selkies support and must be recreated');
+    }
+
+    const sessionToken = helperFunctions.generateSessionToken();
+
+    await selkiesControlPlane.grantSoleToken(
+      { host: instance.name, masterToken: instance.masterToken },
+      sessionToken,
+      role
+    );
+
+    appLogger.info('Instance access granted', {
+      eventType: 'Instance Access Granted',
+      instanceId: instance.id,
+      instanceUUID: instance.uuid,
+      role,
+      timestamp: new Date().toISOString()
+    });
+
+    return sessionToken;
+  }
+
+  /**
+   * Drop every active token, disconnecting anyone currently viewing.
+   * Best effort: a container that is already gone cannot be reached, and that
+   * is not a failure of the caller's operation.
+   */
+  async revokeInstanceAccess(instance: any): Promise<void> {
+    if (!instance.masterToken) {
+      return;
+    }
+
+    try {
+      await selkiesControlPlane.revokeAll({ host: instance.name, masterToken: instance.masterToken });
+
+      appLogger.info('Instance access revoked', {
+        eventType: 'Instance Access Revoked',
+        instanceId: instance.id,
+        instanceUUID: instance.uuid,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      appLogger.warn('Could not revoke instance access - container may already be gone', {
+        eventType: 'Instance Access Revoke Warning',
+        instanceId: instance.id,
+        instanceUUID: instance.uuid,
+        error: (error as Error).message,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
   async terminateInstance(containerId: string, user: ServiceUser): Promise<any> {
     try {
       // Get instance from database
@@ -622,6 +660,8 @@ URL=file:///config/test-corpus
           message: "User requested termination" 
         }]
       });
+
+      await this.revokeInstanceAccess(instance);
 
       try {
         // Stop and remove container
