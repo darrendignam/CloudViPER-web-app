@@ -3,7 +3,7 @@
 import { Sequelize, DataTypes, Model } from 'sequelize';
 import crypto from 'crypto';
 import util from 'util';
-import { UserRole, isValidRole, toUserRole } from '../types/UserRole';
+import { UserRole, isValidRole } from '../types/UserRole';
 
 /*
 ROLES:
@@ -144,7 +144,7 @@ export default (sequelize: Sequelize) => {
                         resolve(false);
                     }
                 });
-            });66
+            });
  
 
         }
@@ -189,6 +189,7 @@ export default (sequelize: Sequelize) => {
 
         public async getInvitationChain(): Promise<User[]> {
             const chain: User[] = [];
+            // eslint-disable-next-line @typescript-eslint/no-this-alias -- the loop reassigns as it walks the chain
             let currentUser: User | null = this;
             
             while (currentUser && currentUser.invitedById) {

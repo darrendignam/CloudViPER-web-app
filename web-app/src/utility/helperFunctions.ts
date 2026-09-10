@@ -13,7 +13,7 @@ const helperFunctions = {
     },
     generateUsername: (email: string): string => {
         if (email.includes('@')) {
-            const [emailName, domain] = email.split('@');
+            const [emailName] = email.split('@');
             return emailName.toLowerCase().replace(/[^a-z0-9]/g, '');
         } else {
             return email.toLowerCase().replace(/[^a-z0-9]/g, '');

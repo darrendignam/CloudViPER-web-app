@@ -3,7 +3,7 @@
  * This script checks and fixes any invalid role values in the database
  */
 
-import { UserRole, isValidRole, toUserRole } from '../types/UserRole';
+import { isValidRole, toUserRole } from '../types/UserRole';
 import db from '../models';
 
 async function migrateUserRoles() {

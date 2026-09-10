@@ -6,7 +6,7 @@ import mysql from 'mysql2';
 import passport from 'passport';
 import crypto from 'crypto';
 import helperFunctions from '../utility/helperFunctions';
-import emailRelay, { EmailRelay } from '../utility/emailRelay';
+import emailRelay from '../utility/emailRelay';
 import configAuth from '../config/auth';
 import { appLogger } from '../config/logger';
 import { UserRole, isValidRole, toUserRole } from '../types/UserRole';
@@ -51,14 +51,6 @@ interface AccountUser {
     invitedById?: number;
 }
 
-interface SafeUser {
-    id: number;
-    username: string;
-    email: string;
-    role: UserRole;
-    team?: string;
-    invitedById?: number;
-}
 
 router.get('/', (req: Request, res: Response) => {
     const user = req.user as AccountUser | undefined;
@@ -147,7 +139,7 @@ router.post('/update', (req: Request, res: Response) => {
                         return;
                     }
                     res.json(user);
-                }).catch((err: Error) => {
+                }).catch(() => {
                     console.log("Error finding user by id: ", _userid);
                     const response: FindUserResponse = { message: 'Error finding user.' };
                     res.status(500).json(response);
@@ -872,7 +864,6 @@ router.post('/reset-password', async (req: Request, res: Response): Promise<void
 router.get('/reset-token/:token', (req: Request, res: Response) => {
     const plainToken = req.params.token;
     const hashedToken = crypto.createHash('sha256').update(plainToken).digest('hex'); // Hash the token for database lookup
-    const currentTime = new Date();
     
     console.log(`🔍 Token validation attempt: ${plainToken.substring(0, 8)}...`);
     

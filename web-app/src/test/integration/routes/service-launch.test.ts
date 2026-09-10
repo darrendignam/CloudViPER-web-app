@@ -39,17 +39,6 @@ const mockService = viperInstanceService as unknown as {
 const OWNER = { id: 42, username: 'owner', email: 'owner@example.org', role: UserRole.MEMBER, team: 'preservation' };
 const INSTANCE = { id: 3, uuid: 'inst123abc45', name: 'viper-cloud-inst123abc45', url: 'inst123abc45.example.org', owner: 42 };
 
-function frameSource(html: string): string {
-    const match = html.match(/<iframe[\s\S]*?src="([^"]+)"/);
-    if (!match) throw new Error('no iframe found in rendered page');
-    return match[1];
-}
-
-function decodeHtmlEntities(value: string): string {
-    return value.replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
-                .replace(/&amp;/g, '&');
-}
-
 function buildApp(user?: any) {
     const app = express();
     app.set('views', path.join(__dirname, '../../../views'));

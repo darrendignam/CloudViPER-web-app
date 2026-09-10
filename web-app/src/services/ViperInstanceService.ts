@@ -1,6 +1,3 @@
-import { Request, Response } from 'express';
-import path from 'path';
-import { QueryTypes } from 'sequelize';
 import db from '../models';
 import { INSTANCE_CREDENTIAL_ATTRIBUTES } from '../models/viperinstance';
 import helperFunctions from '../utility/helperFunctions';

@@ -170,7 +170,7 @@ describe('Account Routes Integration Tests', () => {
     });
 
     it('should generate different hashed tokens for multiple requests', async () => {
-      let tokenCalls: any[] = [];
+      const tokenCalls: any[] = [];
       
       // Create a mock user for each request with fresh update mock
       const createMockUser = () => ({

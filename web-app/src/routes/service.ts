@@ -1,17 +1,13 @@
 import express, { Request, Response } from 'express';
 import dotenv from 'dotenv';
-import Docker from 'dockerode';
 import fs from 'fs';
 import path from 'path';
 import { QueryTypes, Op } from 'sequelize';
 import db from '../models';
 import { INSTANCE_CREDENTIAL_ATTRIBUTES } from '../models/viperinstance';
 import { SelkiesRole } from '../services/SelkiesControlPlane';
-import helperFunctions from '../utility/helperFunctions';
-import { getAvailablePort } from '../utility/portManager';
 import { appLogger } from '../config/logger';
 import { UserRole } from '../types/UserRole';
-import { readAndProcessScript, validateRequiredScripts } from '../utility/scriptManager';
 import containerService from '../services/ContainerService';
 import viperInstanceService from '../services/ViperInstanceService';
 
@@ -20,7 +16,6 @@ dotenv.config();
 const router = express.Router();
 // Using containerService instead of direct Docker instance
 // const docker = new Docker({ socketPath: '/var/run/docker.sock' }); // Keep for compatibility with existing code
-const DOMAIN_NAME = process.env.DOMAIN_NAME || 'cloudviper.org';
 
 /*
 ROLES:
@@ -1470,17 +1465,6 @@ router.post('/activity/:instanceUUID', async (req: Request, res: Response): Prom
     const memoryUsage = Number(rawMemoryUsage) || 0;
 
     try {
-        const activityData = {
-            instanceUUID,
-            mouseEvents,
-            keyboardEvents,
-            windowActive,
-            cpuUsage,
-            memoryUsage,
-            timestamp: timestamp || new Date().toISOString(),
-            receivedAt: new Date().toISOString()
-        };
-
         // Calculate activity score (mouse + keyboard events)
         const activityScore = mouseEvents + keyboardEvents;
         
@@ -1964,8 +1948,6 @@ router.post('/cleanup-inactive', async (req: Request, res: Response): Promise<vo
 
         for (const instance of inactiveInstances) {
             try {
-                const container = containerService.getContainer(instance.dockerid);
-                
                 // Stop and remove container
                 await containerService.stopContainer(instance.dockerid);
                 await containerService.removeContainer(instance.dockerid);

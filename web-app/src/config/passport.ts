@@ -3,7 +3,6 @@ import { Strategy as LocalStrategy } from 'passport-local';
 import { PassportStatic } from 'passport';
 import db from '../models';
 import configAuth from './auth';
-import emailRelay from '../utility/emailRelay';
 import helperFunctions from '../utility/helperFunctions';
 
 const options = {

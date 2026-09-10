@@ -27,14 +27,32 @@
             status.classList.add('is-error');
         }
 
-        frame.addEventListener('load', function () {
-            // Only meaningful once a src has been set: a bare iframe fires load
-            // for about:blank too.
-            if (!frame.src) return;
-            settled = true;
-            status.textContent = 'Connected';
-            status.classList.add('is-connected');
-        });
+        // A load event only says a document arrived. A proxy 502 while the
+        // container starts, or a Selkies close for a bad token, both load a
+        // document, so the frame would report Connected over a blank screen.
+        // Ask the instance directly instead.
+        function confirmReachable(instanceUrl) {
+            var origin = new URL(instanceUrl).origin;
+            var deadline = Date.now() + 120000;
+
+            (function poll() {
+                if (settled) return;
+
+                fetch(origin + '/favicon.ico', { mode: 'no-cors', cache: 'no-store' })
+                    .then(function () {
+                        settled = true;
+                        status.textContent = 'Connected';
+                        status.classList.add('is-connected');
+                    })
+                    .catch(function () {
+                        if (Date.now() > deadline) {
+                            fail('The desktop is not responding');
+                            return;
+                        }
+                        window.setTimeout(poll, 2000);
+                    });
+            })();
+        }
 
         fetch('/service/launch/' + encodeURIComponent(uuid) + '/token', {
             method: 'POST',
@@ -50,6 +68,7 @@
         }).then(function (body) {
             status.textContent = body.role === 'viewer' ? 'Connecting, view only' : 'Connecting';
             frame.src = body.url;
+            confirmReachable(body.url);
         }).catch(function (error) {
             fail(error.message);
         });

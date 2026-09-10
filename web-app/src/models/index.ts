@@ -1,7 +1,6 @@
 'use strict';
 
-import * as path from 'path';
-import { Sequelize, DataTypes, Dialect } from 'sequelize';
+import { Sequelize, Dialect } from 'sequelize';
 import * as process from 'process';
 import dotenv from 'dotenv';
 
@@ -15,7 +14,6 @@ import Activity from './activity'; // Import the Activity model
 
 dotenv.config({ path: "../.env" });
 
-const basename = path.basename(__filename);
 const env = process.env.NODE_ENV || 'development';
 
 const databasehost = configAuth.mysqlSessionAuth.host;
@@ -62,8 +60,7 @@ appLogger.info('Database connection initialized', {
     timestamp: new Date().toISOString()
 });
 
-let sequelize: Sequelize;
-sequelize = new Sequelize(database, username, password, config);
+const sequelize: Sequelize = new Sequelize(database, username, password, config);
 
 const usermodel = User(sequelize);
 const vipermodel = ViperInstance(sequelize);

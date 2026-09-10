@@ -3,7 +3,6 @@ import exphbs from './config/handlebars';
 import bodyParser from 'body-parser';
 import passport from 'passport';
 import flash from 'connect-flash';
-import db from './models';
 import { logSession, appLogger } from './config/logger';
 
 import configAuth from './config/auth';
@@ -29,7 +28,7 @@ appLogger.info('Application starting', {
 // Begin server setup
 app.use( bodyParser.urlencoded({ extended: true}) );
 app.use( bodyParser.json({ limit: '10mb' }) ); // Add JSON body parser with 10MB limit for screenshots
-let path = require('path');
+const path = require('path');
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 
@@ -72,7 +71,7 @@ if (process.env.NODE_ENV === 'production') {
 import session from 'express-session'
 const MySQLStore = require('express-mysql-session')(session);
 const SQLStore = new MySQLStore(configAuth.mysqlSessionAuth);
-let session_config: session.SessionOptions = {
+const session_config: session.SessionOptions = {
     name: "vipercloud.sid",
     // sameSite 'lax' keeps the session cookie off cross-site POSTs, so a third
     // party page cannot drive a state-changing request as the signed-in user.
