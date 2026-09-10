@@ -52,23 +52,34 @@ describe('Port Manager Utility', () => {
 
     describe('isPortAvailable', () => {
         it('should return true for an available port', async () => {
-            // Use a port that's very likely to be available
-            const available = await isPortAvailable(49999);
+            // Bind port 0 so the OS picks a free one, then release it. Naming a
+            // port and hoping it is free makes the result depend on whatever
+            // else the machine happens to be running.
+            const probe = net.createServer();
+            await new Promise<void>((resolve) => { probe.listen(0, '127.0.0.1', resolve); });
+            const freePort = (probe.address() as net.AddressInfo).port;
+            await new Promise<void>((resolve) => { probe.close(() => resolve()); });
+
+            const available = await isPortAvailable(freePort);
             expect(available).toBe(true);
         });
 
         it('should return false for a port in use', async () => {
-            // Create a server on port 3998
+            // Port 0 lets the OS choose, so this cannot collide with another
+            // process or a parallel jest worker. The previous version named 3998
+            // and did not await close(), so the port could still be held on the
+            // next run: the suite failed roughly one run in four.
             const testServer = net.createServer();
             await new Promise<void>((resolve) => {
-                testServer.listen(3998, '127.0.0.1', resolve);
+                testServer.listen(0, '127.0.0.1', resolve);
             });
+            const busyPort = (testServer.address() as net.AddressInfo).port;
 
             try {
-                const available = await isPortAvailable(3998);
+                const available = await isPortAvailable(busyPort);
                 expect(available).toBe(false);
             } finally {
-                testServer.close();
+                await new Promise<void>((resolve) => { testServer.close(() => resolve()); });
             }
         });
     });
