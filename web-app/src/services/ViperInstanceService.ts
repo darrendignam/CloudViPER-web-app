@@ -330,10 +330,12 @@ class ViperInstanceService {
       // Update package lists
       await containerService.execInContainer(container.id, ['apt-get', 'update']);
       
-      // xdotool and curl ship in the ViPER 2.0 image; these three do not. Ask the
-      // image to carry them and this whole step can go.
+      // scrot captures the monitoring screenshots, bc computes the memory
+      // percentage; bash cannot do the fractional division. xdotool and curl are
+      // also used by the monitor but already ship in the ViPER 2.0 image. Ask the
+      // image to carry these two as well and this whole step can go.
       await containerService.execInContainer(container.id,
-        ['apt-get', 'install', '-y', 'scrot', 'bc', 'xinput']
+        ['apt-get', 'install', '-y', 'scrot', 'bc']
       );
       
       appLogger.info('Monitoring dependencies installed', {

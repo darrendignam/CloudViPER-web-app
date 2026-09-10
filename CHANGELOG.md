@@ -81,8 +81,11 @@ instance created afterwards.
 - `rm -f /etc/sudoers.d/abc` from instance hardening. ViPER 2.0 ships no such
   file and `sudo` already requires a password. Removing `abc` from the `sudo`
   group is kept, since that membership is still present.
-- `xdotool` and `curl` from the runtime `apt-get install`. Both ship in the ViPER
-  2.0 image; `scrot`, `bc` and `xinput` still do not and are still installed.
+- `xdotool` and `curl` from the runtime `apt-get install`, since both ship in the
+  ViPER 2.0 image. `xinput` too: nothing in the repository ever used it. It was
+  presumably added for the keyboard event counter in `viper-monitor.sh`, which is
+  initialised, reported and reset but never incremented, so `keyboardEvents` has
+  always been zero. Only `scrot` and `bc` are now installed at runtime.
 
 ### Notes
 

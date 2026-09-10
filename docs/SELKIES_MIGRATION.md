@@ -362,7 +362,8 @@ Sizes: 🟢 small (<½ day), 🟡 medium (½-2 days), 🔴 large (multi-day).
 - [x] 🟢 Registry reference set to `ghcr.io/darrendignam/opf-cloud-viper:2.0.0-alpha`, overridable via `VIPER_IMAGE`
 - [ ] 🟡 Re-verify the preservation toolchain under the new base as launched by CloudViPER, not just standalone
 - [ ] 🟢 Confirm the test corpus bind mount and desktop shortcut still resolve. Note the host path `/var/viper-docker-project/volumes/test-corpus/...` is a packaging dependency.
-- [x] 🟢 Audited the binaries CloudViPER assumes. `xdotool` and `curl` ship; `scrot`, `bc` and `xinput` do not and are installed at runtime. Ask the ViPER build to carry those three and the step disappears.
+- [x] 🟢 Audited the binaries CloudViPER assumes. `xdotool` and `curl` ship in the image; `scrot` and `bc` do not and are installed at runtime. Ask the ViPER build to carry those two and the step disappears. `xinput` was dropped: nothing used it.
+- [ ] 🟢 `viper-monitor.sh` never increments `KEYBOARD_EVENTS`, so `keyboardEvents` is always zero in the Activity model and the admin UI. Either implement it or drop the field.
 
 ### Application
 - [x] 🟡 `masterToken` column on `ViperInstance`, generated with `crypto.randomBytes`
