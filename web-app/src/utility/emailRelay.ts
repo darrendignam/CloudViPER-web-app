@@ -37,20 +37,20 @@ const mailerSend = new MailerSend({
   apiKey: process.env.MAILERSEND_API_KEY!,
 });
 
-const _footer =  '<h3>&nbsp;-&nbsp;Cloud Viper team</h3><div style="font-size: 12px; color: grey; text-align: center; padding: 10px;">This is an unmanaged email account, and as a result cannot receive messages; do not reply to this message. If you need help and support, please reach out to <strong>sysadmin@openpreservation.org</strong></div>';
+const _footer =  '<h3>&nbsp;-&nbsp;CloudViPER team</h3><div style="font-size: 12px; color: grey; text-align: center; padding: 10px;">This is an unmanaged email account, and as a result cannot receive messages; do not reply to this message. If you need help and support, please reach out to <strong>sysadmin@openpreservation.org</strong></div>';
 
 const emailRelay: EmailRelay = {
     sendWelcomeEmail: async (in_email: string, in_username: string): Promise<void> => {
-        const sentFrom = new Sender(`no-reply@${DOMAIN_WITHOUT_WWW}`, "Cloud Viper");
+        const sentFrom = new Sender(`no-reply@${DOMAIN_WITHOUT_WWW}`, "CloudViPER");
         const recipients = [new Recipient(in_email, in_username)];
 
         const emailParams = new EmailParams()
             .setFrom(sentFrom)
             .setTo(recipients)
-            .setSubject('Welcome to Cloud Viper ' + in_username)
-            .setText(`You are now part of the Viper community. Access Cloud Viper via https://${DOMAIN_NAME}/`)
+            .setSubject('Welcome to CloudViPER ' + in_username)
+            .setText(`You are now part of the Viper community. Access CloudViPER via https://${DOMAIN_NAME}/`)
             .setHtml('<h2>You are now part of the Viper community</h2>' +
-                `Access Cloud Viper via <a href="https://${DOMAIN_NAME}">${DOMAIN_NAME}</a>.<br>\n\n` +
+                `Access CloudViPER via <a href="https://${DOMAIN_NAME}">${DOMAIN_NAME}</a>.<br>\n\n` +
                 'You may need to wait for a service admin to authorize your account to access the advanced features of the service.<br>\n\n' +
                 'Find out more information about ViPER here <a href="https://viper.openpreservation.org">https://viper.openpreservation.org</a>.<br>\n\n' +
                 _footer);
@@ -63,22 +63,22 @@ const emailRelay: EmailRelay = {
         }
     },
     sendInvitedEmail: async (in_email: string, in_username: string, in_invitee: string): Promise<void> => {
-        const sentFrom = new Sender(`no-reply@${DOMAIN_WITHOUT_WWW}`, "Cloud Viper");
+        const sentFrom = new Sender(`no-reply@${DOMAIN_WITHOUT_WWW}`, "CloudViPER");
         const recipients = [new Recipient(in_email, in_username)];
 
         const emailParams = new EmailParams()
             .setFrom(sentFrom)
             .setTo(recipients)
-            .setSubject('Welcome to Cloud Viper ' + in_username)
-            .setText('You have been invited to the Cloud Viper community by ' + in_invitee +
+            .setSubject('Welcome to CloudViPER ' + in_username)
+            .setText('You have been invited to the CloudViPER community by ' + in_invitee +
                 '. Your username is "' + in_username + '" and the email used to sign you up was "' +
                 in_email + `". To begin using the service you will need to reset your password by visiting the following link, and following the instructions: https://${DOMAIN_NAME}/account/reset-password`)
-            .setHtml('<h2>You have been invited to use Cloud Viper!</h2>' +
+            .setHtml('<h2>You have been invited to use CloudViPER!</h2>' +
                 'You have been invited by ' + in_invitee +
                 '. Your username is "' + in_username + '" and the email used to sign you up was "' +
                 in_email + '". To begin using the service you will need to reset your password by visiting the following link, and following the instructions:' +
-                `<h3>Reset Cloud Viper password: <a href="https://${DOMAIN_NAME}/account/reset-password">https://${DOMAIN_NAME}/account/reset-password</a>.</h3><br>\n\n` +
-                `Access Cloud Viper via <a href="https://${DOMAIN_NAME}">${DOMAIN_NAME}</a>.<br>\n\n` +
+                `<h3>Reset CloudViPER password: <a href="https://${DOMAIN_NAME}/account/reset-password">https://${DOMAIN_NAME}/account/reset-password</a>.</h3><br>\n\n` +
+                `Access CloudViPER via <a href="https://${DOMAIN_NAME}">${DOMAIN_NAME}</a>.<br>\n\n` +
                 'You may need to wait for a service admin to authorize your account to access the advanced features of the service.<br>\n\n' +
                 'Find out more information about ViPER here <a href="https://viper.openpreservation.org">https://viper.openpreservation.org</a>.<br>\n\n' +
                 _footer);
@@ -91,20 +91,20 @@ const emailRelay: EmailRelay = {
         }
     },
     sendResetEmail: async (in_email: string, in_username: string, in_token: string): Promise<void> => {
-        const sentFrom = new Sender(`no-reply@${DOMAIN_WITHOUT_WWW}`, "Cloud Viper");
+        const sentFrom = new Sender(`no-reply@${DOMAIN_WITHOUT_WWW}`, "CloudViPER");
         const recipients = [new Recipient(in_email, in_username)];
 
         const emailParams = new EmailParams()
             .setFrom(sentFrom)
             .setTo(recipients)
-            .setSubject('Cloud Viper - Password reset')
+            .setSubject('CloudViPER - Password reset')
             .setText(`You are receiving this message because you have requested the reset of the password for your account.\n\n
           USERNAME: ${in_username}\n\n
           EMAIL: ${in_email}\n\n
           Please click on the following link, or paste this into your browser to complete the process:\n\n
           https://${DOMAIN_NAME}/account/reset-token/${in_token}\n\n
           If you did not request this, please ignore this email and your password will remain unchanged.\n`)
-            .setHtml('<h2>A Cloud Viper password reset was requested</h2>' +
+            .setHtml('<h2>A CloudViPER password reset was requested</h2>' +
                 'You are receiving this message because you have requested the reset of the password for your account.<br>\n\n' +
                 '<p>USERNAME: ' + in_username + '<br>\n\n' +
                 'EMAIL: ' + in_email + '</p><br>\n\n' +

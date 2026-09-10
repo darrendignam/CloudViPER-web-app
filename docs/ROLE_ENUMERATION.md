@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the implementation of a comprehensive role enumeration system for the Cloud ViPER application, replacing the previous string-based role system with a TypeScript enum for better type safety and maintainability.
+This document describes the implementation of a comprehensive role enumeration system for the CloudViPER application, replacing the previous string-based role system with a TypeScript enum for better type safety and maintainability.
 
 ## Role Definitions
 

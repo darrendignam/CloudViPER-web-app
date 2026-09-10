@@ -1,7 +1,7 @@
 /**
  * User Role Enumeration
  * 
- * Defines the available user roles in the Cloud ViPER system
+ * Defines the available user roles in the CloudViPER system
  */
 
 export enum UserRole {
