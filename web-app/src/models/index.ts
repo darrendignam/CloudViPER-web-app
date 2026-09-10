@@ -2,7 +2,6 @@
 
 import { Sequelize, Dialect } from 'sequelize';
 import * as process from 'process';
-import dotenv from 'dotenv';
 
 import configAuth from '../config/auth';
 import { logSQL, appLogger } from '../config/logger';
@@ -12,7 +11,6 @@ import Log from './log'; // Import the Logs model
 import Screenshot from './screenshot'; // Import the Screenshot model
 import Activity from './activity'; // Import the Activity model
 
-dotenv.config({ path: "../.env" });
 
 const env = process.env.NODE_ENV || 'development';
 

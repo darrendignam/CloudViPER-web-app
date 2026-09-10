@@ -8,8 +8,6 @@ import { logSession, appLogger } from './config/logger';
 import configAuth from './config/auth';
 import { readIntEnv } from './utility/envConfig';
 
-import dotenv from 'dotenv';
-dotenv.config({ path: `${__dirname}/.env` });
 
 console.log(`DB USER: ${process.env.DB_USER}`);
 

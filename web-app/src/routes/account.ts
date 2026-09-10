@@ -1,5 +1,4 @@
 import express, { Request, Response } from 'express';
-import dotenv from 'dotenv';
 import { Op } from 'sequelize';
 import db from '../models/';
 import mysql from 'mysql2';
@@ -11,7 +10,6 @@ import configAuth from '../config/auth';
 import { appLogger } from '../config/logger';
 import { UserRole, isValidRole, toUserRole } from '../types/UserRole';
 
-dotenv.config();
 
 const router = express.Router();
 

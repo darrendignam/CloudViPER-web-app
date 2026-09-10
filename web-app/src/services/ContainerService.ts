@@ -1,5 +1,4 @@
 import Docker from 'dockerode';
-import dotenv from 'dotenv';
 import { appLogger } from '../config/logger';
 
 // Extend the typings to fix the return type of listContainers
@@ -9,7 +8,6 @@ declare module 'dockerode' {
   }
 }
 
-dotenv.config();
 
 /**
  * ContainerService Interface - designed to be implementation agnostic

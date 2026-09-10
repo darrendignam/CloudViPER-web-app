@@ -8,9 +8,7 @@ import { UserRole } from '../types/UserRole';
 import { readAndProcessScript, validateRequiredScripts } from '../utility/scriptManager';
 import containerService from './ContainerService';
 import selkiesControlPlane, { SelkiesRole } from './SelkiesControlPlane';
-import dotenv from 'dotenv';
 
-dotenv.config();
 
 const DOMAIN_NAME = process.env.DOMAIN_NAME || 'cloudviper.org';
 // Applied to every container this service creates. Teardown of a container with

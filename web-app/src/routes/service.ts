@@ -1,5 +1,4 @@
 import express, { Request, Response } from 'express';
-import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { QueryTypes, Op } from 'sequelize';
@@ -11,7 +10,6 @@ import { UserRole } from '../types/UserRole';
 import containerService from '../services/ContainerService';
 import viperInstanceService from '../services/ViperInstanceService';
 
-dotenv.config();
 
 const router = express.Router();
 // Using containerService instead of direct Docker instance
