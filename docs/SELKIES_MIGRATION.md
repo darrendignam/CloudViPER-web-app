@@ -330,7 +330,13 @@ These are not caused by the migration but should be fixed alongside it. See [Sec
 - `Math.random()` generates instance secrets (`utility/helperFunctions.ts:27`). Any new token generation must use `crypto.randomBytes`. Do not extend `generateRandomString`.
 - `/service/viperinstances` returns `kasmvncPassword` and `statusKey` to the browser. Its `attributes: { exclude: [...] }` list does not cover them. Migration is the natural moment to drop both from the payload.
 
-### 7.2 In-desktop sharing is on by default
+### 7.2 In-desktop sharing is on by default, and cannot be fully enforced
+
+> The master token reaches the desktop session's environment, so a user can mint
+> their own tokens whatever these are set to. Setting them false is still worth
+> doing, but treat it as a default rather than a control. Full analysis and the
+> options in [SELKIES_MASTER_TOKEN_EXPOSURE.md](SELKIES_MASTER_TOKEN_EXPOSURE.md).
+
 
 `SELKIES_ENABLE_SHARING`, `SELKIES_ENABLE_COLLAB` and `SELKIES_ENABLE_SHARED` all default to `True`. A user inside a desktop can generate collaborative or view-only share links. For a workshop with attendee isolation, set these to `false` unless the feature is wanted deliberately.
 

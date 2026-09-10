@@ -42,8 +42,11 @@ Ubuntu 26.04 in the same release cycle.
 - Instances start in Selkies secure mode via `SELKIES_MASTER_TOKEN` instead of
   KasmVNC basic auth via `PASSWORD`.
 - In-desktop sharing is disabled by default (`SELKIES_ENABLE_SHARING`,
-  `SELKIES_ENABLE_COLLAB`, `SELKIES_ENABLE_SHARED` all `false`), so a user
-  cannot generate share links from inside their desktop.
+  `SELKIES_ENABLE_COLLAB`, `SELKIES_ENABLE_SHARED` all `false`). Note this is a
+  default, not an enforced control: the Selkies master token is passed to the
+  container as an environment variable and is therefore readable from inside the
+  desktop session, so a determined user can mint their own token regardless. See
+  [SELKIES_MASTER_TOKEN_EXPOSURE.md](docs/SELKIES_MASTER_TOKEN_EXPOSURE.md).
 - Instance list entry points link to `/service/launch/:uuid` rather than the raw
   instance URL, which now loads a page that cannot stream without a token.
 - Container environment is logged by variable name only. It previously printed
