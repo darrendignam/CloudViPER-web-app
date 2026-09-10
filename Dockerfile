@@ -15,6 +15,12 @@ RUN npm ci
 COPY ./web-app/src/ ./src/
 COPY ./web-app/scripts/ ./scripts/
 
+# Instance provisioning scripts, read at runtime by utility/scriptManager. They
+# live at the repository root because the VM build uses them too; without this
+# copy the monitor is never installed into a ViPER instance.
+COPY ./scripts/viper-monitor.sh ./scripts/viper-monitor.sh
+COPY ./scripts/viper-monitor.desktop ./scripts/viper-monitor.desktop
+
 # Build the TypeScript application
 RUN npm run build
 

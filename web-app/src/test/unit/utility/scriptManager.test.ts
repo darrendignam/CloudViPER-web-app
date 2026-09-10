@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { readAndProcessScript, getAvailableScripts, validateRequiredScripts } from '../../../utility/scriptManager';
+import { readAndProcessScript, getAvailableScripts, validateRequiredScripts, getScriptsDirectory } from '../../../utility/scriptManager';
 
 // Mock fs module
 jest.mock('fs');
@@ -74,6 +74,36 @@ describe('Script Manager', () => {
         });
     });
 
+    describe('getScriptsDirectory', () => {
+        afterEach(() => {
+            delete process.env.SCRIPTS_DIR;
+        });
+
+        it('should prefer SCRIPTS_DIR when set', () => {
+            process.env.SCRIPTS_DIR = '/explicit/scripts';
+
+            expect(getScriptsDirectory()).toBe('/explicit/scripts');
+        });
+
+        it('should use the built layout when the scripts sit two levels up', () => {
+            mockFs.existsSync.mockImplementation((filePath: any) => !filePath.includes('../../../'));
+
+            expect(getScriptsDirectory()).toContain('../../scripts');
+        });
+
+        it('should fall back to the source layout, which is why dev used to find nothing', () => {
+            mockFs.existsSync.mockImplementation((filePath: any) => filePath.includes('../../../scripts'));
+
+            expect(getScriptsDirectory()).toContain('../../../scripts');
+        });
+
+        it('should return the built layout when neither candidate holds the scripts', () => {
+            mockFs.existsSync.mockReturnValue(false);
+
+            expect(getScriptsDirectory()).toContain('../../scripts');
+        });
+    });
+
     describe('getAvailableScripts', () => {
         it('should return filtered script files when scripts directory exists', () => {
             const mockFiles = [
@@ -83,6 +113,8 @@ describe('Script Manager', () => {
                 'readme.txt',
                 'config.json'
             ];
+            // getAvailableScripts filters by extension, so a stray .service file
+            // in the directory is still listed even though nothing reads one.
             
             mockFs.existsSync.mockReturnValue(true);
             mockFs.readdirSync.mockReturnValue(mockFiles as any);
@@ -146,10 +178,7 @@ describe('Script Manager', () => {
             const result = validateRequiredScripts();
             
             expect(result.valid).toBe(false);
-            expect(result.missing).toEqual([
-                'viper-monitor.service',
-                'viper-monitor.desktop'
-            ]);
+            expect(result.missing).toEqual(['viper-monitor.desktop']);
         });
 
         it('should return invalid with all missing when scripts directory is empty', () => {
@@ -160,7 +189,6 @@ describe('Script Manager', () => {
             expect(result.valid).toBe(false);
             expect(result.missing).toEqual([
                 'viper-monitor.sh',
-                'viper-monitor.service',
                 'viper-monitor.desktop'
             ]);
         });

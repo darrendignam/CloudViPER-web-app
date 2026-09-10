@@ -17,11 +17,11 @@ The main monitoring script that runs inside each ViPER container. This script:
 - `{{SERVICE_URL}}` - Base URL of the parent application
 - `{{DOMAIN_NAME}}` - Domain name for the service
 
-### `viper-monitor.service`
-SystemD user service file for auto-starting the monitoring script in XFCE environments.
-
 ### `viper-monitor.desktop`
-Desktop autostart entry for XFCE desktop environments to ensure monitoring starts with the session.
+XDG autostart entry that starts the monitoring script with the desktop session.
+Written to `/config/.config/autostart/` in the instance, which is the `abc` user's
+home, and honoured by MATE. A systemd unit was written alongside this until 2.0.0
+and has been removed: init in the LinuxServer images is s6-svscan, so it never ran.
 
 ### `debug-monitoring.sh`
 Debug script to test monitoring functionality and troubleshoot issues.
