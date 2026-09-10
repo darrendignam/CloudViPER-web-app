@@ -6,7 +6,7 @@ import { Model, DataTypes, Sequelize } from 'sequelize';
 // CloudViPER to the container's Selkies control plane and statusKey authorises
 // the in-container monitor's callbacks, so neither may reach a browser, an
 // admin's included. Excluded from every query whose result is serialised out.
-export const INSTANCE_CREDENTIAL_ATTRIBUTES = ['masterToken', 'statusKey'];
+export const INSTANCE_CREDENTIAL_ATTRIBUTES = ['masterToken', 'statusKey', 'sessionTokens'];
 
 interface ViperInstanceAttributes {
     id?: number;
@@ -16,6 +16,8 @@ interface ViperInstanceAttributes {
     name: string;
     url: string;
     masterToken: string;
+    sessionTokens?: Record<string, any>;
+    devPorts?: Record<string, number> | null;
     statusKey: string;
     createdAt?: Date;
     updatedAt?: Date;
@@ -37,6 +39,8 @@ export default (sequelize: Sequelize) => {
         public name!: string;
         public url!: string;
         public masterToken!: string;
+        public sessionTokens?: Record<string, any>;
+        public devPorts?: Record<string, number> | null;
         public statusKey!: string;
         public createdAt?: Date;
         public updatedAt?: Date;
@@ -76,6 +80,15 @@ export default (sequelize: Sequelize) => {
         name: { type: DataTypes.STRING, allowNull: true },
         url: { type: DataTypes.STRING, allowNull: true },
         masterToken: { type: DataTypes.STRING, allowNull: true },
+        // Session tokens currently registered with the container's control
+        // plane, keyed by token. A control plane POST replaces the whole set, so
+        // the set has to be reconstructed on every grant; without this an owner
+        // is disconnected whenever anyone else opens their desktop.
+        sessionTokens: { type: DataTypes.JSON, allowNull: true, defaultValue: {} },
+        // Host ports published in development, where the app runs outside the
+        // Docker network and cannot resolve the container by name. Null in
+        // production, where service names resolve and nothing is published.
+        devPorts: { type: DataTypes.JSON, allowNull: true, defaultValue: null },
         statusKey: { type: DataTypes.STRING, allowNull: true },
         createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
         status: { type: DataTypes.STRING, allowNull: false, defaultValue: 'initilising' },

@@ -15,6 +15,11 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const DOMAIN_NAME = process.env.DOMAIN_NAME || 'cloudviper.org';
+// Applied to every container this service creates. Teardown of a container with
+// no database row requires it, so a stray or hostile id cannot reach the
+// orchestrator's own container, MySQL, or anything else on the host.
+export const CLOUDVIPER_INSTANCE_LABEL = 'org.openpreservation.cloudviper.instance';
+
 const VIPER_IMAGE = process.env.VIPER_IMAGE || 'ghcr.io/darrendignam/opf-cloud-viper:2.0.0-alpha';
 const TEST_CORPUS_HOST_PATH = process.env.TEST_CORPUS_HOST_PATH
   || '/var/viper-docker-project/volumes/test-corpus/test-root/corpora';
@@ -27,6 +32,48 @@ export interface ServiceUser {
   role: UserRole;
   team?: string;
   invitedById?: number;
+}
+
+// Session tokens outlive nothing but the container, so they are bounded here
+// rather than accumulating for the life of the instance. A desktop session that
+// has not been reopened within the window is assumed done with.
+const SESSION_TOKEN_TTL_MS = parseInt(process.env.SESSION_TOKEN_TTL_MS || '43200000', 10); // 12h
+const MAX_ACTIVE_SESSION_TOKENS = 8;
+
+function prunedSessionTokens(tokens: Record<string, any> | undefined | null): Record<string, any> {
+  const entries = Object.entries(tokens || {});
+  const cutoff = Date.now() - SESSION_TOKEN_TTL_MS;
+
+  return Object.fromEntries(
+    entries
+      .filter(([, permissions]) => {
+        const issuedAt = Date.parse(permissions?.issuedAt ?? '');
+        return Number.isFinite(issuedAt) && issuedAt >= cutoff;
+      })
+      .sort(([, a], [, b]) => Date.parse(b.issuedAt) - Date.parse(a.issuedAt))
+      .slice(0, MAX_ACTIVE_SESSION_TOKENS - 1)
+  );
+}
+
+// issuedAt is bookkeeping of ours; the control plane rejects unknown fields.
+function toControlPlaneTokenSet(tokens: Record<string, any>): Record<string, any> {
+  return Object.fromEntries(
+    Object.entries(tokens).map(([token, permissions]) => [
+      token,
+      { role: permissions.role, slot: permissions.slot ?? null, mk_control: permissions.mk_control ?? false }
+    ])
+  );
+}
+
+// A container is addressed by name on the Docker network in production, and
+// through its published port in development, where the app runs on the host and
+// that name does not resolve.
+function controlPlaneTarget(instance: any) {
+  const devControlPort = instance.devPorts?.control;
+
+  return devControlPort
+    ? { host: '127.0.0.1', masterToken: instance.masterToken, port: devControlPort }
+    : { host: instance.name, masterToken: instance.masterToken };
 }
 
 // Docker's inspect output carries the container's full environment, which holds
@@ -105,7 +152,13 @@ class ViperInstanceService {
 
     try {
       // Find an available port for development, production uses reverse proxy
-      const availablePort = process.env.NODE_ENV === 'dev' ? await getAvailablePort(3010) : 3000;
+      const isDev = process.env.NODE_ENV === 'dev';
+      const availablePort = isDev ? await getAvailablePort(3010) : 3000;
+      // In development the app runs on the host, so the container name does not
+      // resolve and the control plane has to be reachable through a published
+      // port like the web port. Never published in production.
+      const devControlPort = isDev ? await getAvailablePort(availablePort + 1) : undefined;
+      const devPorts = isDev ? { web: availablePort, control: devControlPort! } : null;
 
       const containerOptions: any = {
         Image: VIPER_IMAGE,
@@ -113,12 +166,14 @@ class ViperInstanceService {
         HostConfig: {
           ShmSize: 1024 * 1024 * 1024,
           Binds: [`${TEST_CORPUS_HOST_PATH}:/config/test-corpus:ro`],
-          ...(process.env.NODE_ENV === 'dev' && { PortBindings: { 
+          ...(isDev && { PortBindings: {
             '3000/tcp': [{ HostPort: `${availablePort}` }],
-            '3001/tcp': [] // Empty binding to prevent null value
+            '3001/tcp': [], // Empty binding to prevent null value
+            '8083/tcp': [{ HostPort: `${devControlPort}` }]
           } })
         },
-        ExposedPorts: { '3000/tcp': {} },
+        Labels: { [CLOUDVIPER_INSTANCE_LABEL]: instanceUUID },
+        ExposedPorts: { '3000/tcp': {}, ...(isDev && { '8083/tcp': {} }) },
         NetworkingConfig: {
           EndpointsConfig: {
             'cloud-viper-net': {},
@@ -151,6 +206,7 @@ class ViperInstanceService {
         name: containerName,
         url: instanceURL,
         masterToken: masterToken,
+        devPorts,
         statusKey: statusKey,
         owner: ownerId,
         status: 'created',
@@ -502,7 +558,9 @@ class ViperInstanceService {
    */
   private async createTestCorpusShortcut(container: any, instanceUUID: string): Promise<void> {
     try {
-      await containerService.execInContainer(container.id, ['mkdir', '-p', '/config/Desktop']);
+      // Both as abc. Creating the directory as root would leave it root owned
+      // and the symlink step, which runs as abc, would fail on a fresh volume.
+      await this.execChecked(container.id, ['mkdir', '-p', '/config/Desktop'], { User: 'abc' });
 
       // A symlink rather than a .desktop launcher: Caja refuses to open a
       // launcher it has not been told to trust, and that trust flag is per-user
@@ -512,7 +570,7 @@ class ViperInstanceService {
       // Created as abc rather than created as root and chowned: chown -h on a
       // symlink is silently a no-op here, which would leave it owned by root
       // while ViPER's own desktop links are owned by abc.
-      await containerService.execInContainer(container.id,
+      await this.execChecked(container.id,
         ['ln', '-sfn', '/config/test-corpus', '/config/Desktop/Test Corpus'],
         { User: 'abc' }
       );
@@ -608,18 +666,28 @@ class ViperInstanceService {
     }
 
     const sessionToken = helperFunctions.generateSessionToken();
+    const issued = {
+      ...prunedSessionTokens(instance.sessionTokens),
+      [sessionToken]: { role, slot: null, mk_control: false, issuedAt: new Date().toISOString() }
+    };
 
-    await selkiesControlPlane.grantSoleToken(
-      { host: instance.name, masterToken: instance.masterToken },
-      sessionToken,
-      role
+    // The control plane replaces its entire set, so every still-valid token has
+    // to be sent again. Sending only the new one would disconnect whoever is
+    // already in the desktop, which for a team leader looking in would mean
+    // ejecting the owner mid-session.
+    await selkiesControlPlane.replaceTokens(
+      controlPlaneTarget(instance),
+      toControlPlaneTokenSet(issued)
     );
+
+    await instance.update({ sessionTokens: issued });
 
     appLogger.info('Instance access granted', {
       eventType: 'Instance Access Granted',
       instanceId: instance.id,
       instanceUUID: instance.uuid,
       role,
+      activeTokens: Object.keys(issued).length,
       timestamp: new Date().toISOString()
     });
 
@@ -637,7 +705,11 @@ class ViperInstanceService {
     }
 
     try {
-      await selkiesControlPlane.revokeAll({ host: instance.name, masterToken: instance.masterToken });
+      await selkiesControlPlane.revokeAll(controlPlaneTarget(instance));
+
+      if (typeof instance.update === 'function') {
+        await instance.update({ sessionTokens: {} });
+      }
 
       appLogger.info('Instance access revoked', {
         eventType: 'Instance Access Revoked',
@@ -657,29 +729,82 @@ class ViperInstanceService {
   }
 
   /**
+   * Run a command in a container and fail loudly on a non-zero exit.
+   * execInContainer resolves with an exitCode that callers routinely ignore, so
+   * a permission error or a missing binary otherwise passes for success.
+   */
+  private async execChecked(containerId: string, command: string[], options?: any): Promise<string> {
+    const { output, exitCode } = await containerService.execInContainer(containerId, command, options);
+
+    if (exitCode !== 0) {
+      throw new Error(`Command failed (exit ${exitCode}): ${command.join(' ')} :: ${output.trim()}`);
+    }
+
+    return output;
+  }
+
+  /**
+   * Confirm a container carries this service's instance label. Anything the
+   * service did not create, or that cannot be inspected, is refused.
+   */
+  private async isCloudViperInstance(containerId: string): Promise<boolean> {
+    try {
+      const container = containerService.getContainer(containerId);
+      const details = await container.inspect();
+      return Boolean(details?.Config?.Labels?.[CLOUDVIPER_INSTANCE_LABEL]);
+    } catch (error) {
+      appLogger.warn('Could not verify container ownership', {
+        eventType: 'Container Ownership Check Failed',
+        containerId,
+        error: (error as Error).message,
+        timestamp: new Date().toISOString()
+      });
+      return false;
+    }
+  }
+
+  /**
    * Stop and remove a container. A container that has already gone is not an
    * error: the caller's goal is that it no longer runs.
    */
-  private async removeContainer(containerId: string, instanceId?: number): Promise<void> {
+  private async removeContainer(containerId: string, instanceId?: number): Promise<boolean> {
+    const container = containerService.getContainer(containerId);
+
+    // A stop that fails must not skip the remove. Docker rejects stop on a
+    // container that has already exited, which is the usual state of the
+    // orphans this path exists to reclaim, and remove with force stops a
+    // running container by itself.
     try {
-      const container = containerService.getContainer(containerId);
       await container.stop({ t: 5 });
+    } catch (stopError) {
+      appLogger.info('Container did not need stopping', {
+        eventType: 'Container Stop Skipped',
+        reason: (stopError as Error).message,
+        instanceId,
+        containerId,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    try {
       await container.remove({ force: true });
 
-      appLogger.info('Container stopped and removed', {
+      appLogger.info('Container removed', {
         eventType: 'Container Removed',
         instanceId,
         containerId,
         timestamp: new Date().toISOString()
       });
-    } catch (containerError) {
-      appLogger.warn('Error removing container - may already be removed', {
-        eventType: 'Container Remove Warning',
-        error: (containerError as Error).message,
+      return true;
+    } catch (removeError) {
+      appLogger.warn('Container removal failed', {
+        eventType: 'Container Remove Failed',
+        error: (removeError as Error).message,
         instanceId,
         containerId,
         timestamp: new Date().toISOString()
       });
+      return false;
     }
   }
 
@@ -697,6 +822,14 @@ class ViperInstanceService {
           throw new Error('Instance not found');
         }
 
+        // Without a database row there is nothing tying this id to CloudViPER,
+        // so the container must identify itself. The route only checks that the
+        // id is ten characters or more, and names like cloud-viper-gui-app and
+        // cloud-viper-mysqldb clear that easily.
+        if (!(await this.isCloudViperInstance(containerId))) {
+          throw new Error('Instance not found');
+        }
+
         appLogger.warn('Terminating orphaned container with no database row', {
           eventType: 'Orphan Container Termination',
           containerId,
@@ -704,8 +837,11 @@ class ViperInstanceService {
           timestamp: new Date().toISOString()
         });
 
-        await this.removeContainer(containerId);
-        return { success: true, message: 'Orphaned container removed' };
+        const removed = await this.removeContainer(containerId);
+        return {
+          success: removed,
+          message: removed ? 'Orphaned container removed' : 'Orphaned container could not be removed'
+        };
       }
 
       // Check if user has permission to terminate the instance
