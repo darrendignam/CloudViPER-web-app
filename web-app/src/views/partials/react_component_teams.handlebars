@@ -1,0 +1,153 @@
+  class TeamList extends React.Component {
+    constructor(props) {
+      super(props);
+      this.state = {
+        teams: [],
+        images: [],
+        loading: true,
+        error: null,
+        newName: '',
+        newDescription: '',
+        creating: false
+      };
+    }
+
+    componentDidMount() {
+      this.fetchTeams();
+      this.fetchImages();
+    }
+
+    fetchTeams = () => {
+      fetchJson('/account/teams/detail')
+        .then(teams => this.setState({ teams, loading: false, error: null }))
+        .catch(error => this.setState({ error: error.message, loading: false }));
+    };
+
+    // Needed to name a team's default image rather than showing a bare id.
+    fetchImages = () => {
+      fetchJson('/images/api/launchable')
+        .then(images => this.setState({ images }))
+        .catch(() => { /* a team with no default is the normal case */ });
+    };
+
+    createTeam = (event) => {
+      event.preventDefault();
+      const { newName, newDescription, creating } = this.state;
+      if (creating || !newName.trim()) return;
+
+      this.setState({ creating: true, error: null });
+
+      fetchJson('/account/teams', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName.trim(), description: newDescription })
+      })
+        .then(() => {
+          this.setState({ newName: '', newDescription: '', creating: false });
+          this.fetchTeams();
+        })
+        .catch(error => this.setState({ error: error.message, creating: false }));
+    };
+
+    deleteTeam = (team) => {
+      if (team.memberCount > 0) return;
+      if (!window.confirm('Delete the team "' + team.name + '"?')) return;
+
+      fetchJson('/account/teams/' + team.id, { method: 'DELETE' })
+        .then(() => this.fetchTeams())
+        .catch(error => this.setState({ error: error.message }));
+    };
+
+    setTeamDefaultImage = (team, imageId) => {
+      fetchJson('/images/api/team/' + team.id + '/default', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageId: imageId ? Number(imageId) : null })
+      })
+        .then(() => this.fetchTeams())
+        .catch(error => this.setState({ error: error.message }));
+    };
+
+    render() {
+      const { teams, images, loading, error, newName, newDescription, creating } = this.state;
+
+      if (loading) return <p>Loading teams...</p>;
+
+      return (
+        <div>
+          {error && <div className="image-warning">{error}</div>}
+
+          <form className="image-form" onSubmit={this.createTeam}>
+            <h5>Create a team</h5>
+            <div className="form-group">
+              <label htmlFor="team-name">Name</label>
+              <input id="team-name" className="form-control" required
+                placeholder="preservation"
+                value={newName}
+                onChange={(e) => this.setState({ newName: e.target.value })} />
+            </div>
+            <div className="form-group">
+              <label htmlFor="team-description">Description</label>
+              <input id="team-description" className="form-control"
+                value={newDescription}
+                onChange={(e) => this.setState({ newDescription: e.target.value })} />
+            </div>
+            <button className="btn btn-primary" type="submit" disabled={creating}>
+              {creating ? 'Creating...' : 'Create team'}
+            </button>
+          </form>
+
+          <h5>Teams ({teams.length})</h5>
+          {teams.length === 0 && (
+            <p className="text-muted">
+              No teams yet. Users with no team see only their own instances, which is the
+              safe default.
+            </p>
+          )}
+
+          {teams.length > 0 && (
+            <table className="table table-sm">
+              <thead>
+                <tr><th>Team</th><th>Members</th><th>Default image</th><th>Actions</th></tr>
+              </thead>
+              <tbody>
+                {teams.map(team => (
+                  <tr key={team.id}>
+                    <td>
+                      <strong>{team.name}</strong>
+                      {team.description && <div className="text-muted small">{team.description}</div>}
+                    </td>
+                    <td>{team.memberCount}</td>
+                    <td>
+                      <select
+                        className="form-control form-control-sm"
+                        value={team.defaultImageId || ''}
+                        onChange={(e) => this.setTeamDefaultImage(team, e.target.value)}
+                      >
+                        <option value="">System default</option>
+                        {images.map(image => (
+                          <option key={image.id} value={image.id}>{image.name}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      {team.memberCount > 0 ? (
+                        // Deleting a team with members would leave them pointing
+                        // at a row that no longer exists, and a dangling teamId
+                        // matches nothing, so they would quietly lose sight of
+                        // their team's instances with no error anywhere.
+                        <span className="text-muted small">move members out to delete</span>
+                      ) : (
+                        <button className="btn btn-sm btn-outline-danger"
+                          onClick={() => this.deleteTeam(team)}>Delete</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      );
+    }
+  }

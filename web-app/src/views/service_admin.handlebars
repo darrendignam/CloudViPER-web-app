@@ -1046,6 +1046,7 @@
     {{> react_component_health }}
     {{> react_component_statistics }}
     {{> react_component_images }}
+    {{> react_component_teams }}
 
     class AdminDashboard extends React.Component {
         constructor(props) {
@@ -1109,6 +1110,13 @@
                     icon: 'fas fa-users',
                     component: <UserList userRole={userRole} userTeam={userTeam} />,
                     description: 'Manage user accounts, roles, and permissions'
+                },
+                {
+                    id: 'teams',
+                    label: 'Teams',
+                    icon: 'fas fa-user-friends',
+                    component: <TeamList />,
+                    description: 'Create teams, set their default image, and see who is in them'
                 },
                 {
                     id: 'sessions',

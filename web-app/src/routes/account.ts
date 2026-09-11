@@ -245,6 +245,138 @@ router.get('/teams', async (req: Request, res: Response) => {
     }
 });
 
+/**
+ * Teams with the detail a management view needs: how many members, and which
+ * image they default to.
+ *
+ * Separate from GET /teams, which returns bare names because the user forms
+ * bind those directly as select values. Widening that response would change
+ * what those selects submit.
+ */
+router.get('/teams/detail', async (req: Request, res: Response): Promise<void> => {
+    const user = req.user as AccountUser | undefined;
+
+    if (!user || user.role !== UserRole.ADMIN) {
+        res.status(user ? 403 : 401).send({ message: 'Unauthorized' });
+        return;
+    }
+
+    try {
+        const teams = await db.Team.findAll({ order: [['name', 'ASC']] });
+
+        const detail = await Promise.all(teams.map(async (team: any) => ({
+            id: team.id,
+            name: team.name,
+            description: team.description,
+            defaultImageId: team.defaultImageId,
+            memberCount: await db.User.count({ where: { teamId: team.id } })
+        })));
+
+        res.json(detail);
+    } catch (error) {
+        appLogger.error('Could not list teams', {
+            eventType: 'Team List Error',
+            error: (error as Error).message,
+            timestamp: new Date().toISOString()
+        });
+        res.status(500).send({ message: 'Could not list teams' });
+    }
+});
+
+router.post('/teams', async (req: Request, res: Response): Promise<void> => {
+    const user = req.user as AccountUser | undefined;
+
+    if (!user || user.role !== UserRole.ADMIN) {
+        res.status(user ? 403 : 401).send({ message: 'Unauthorized' });
+        return;
+    }
+
+    const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
+
+    if (!name) {
+        res.status(400).send({ message: 'A team name is required' });
+        return;
+    }
+
+    // The same values that mean "no team" elsewhere must not become a team
+    // here, or membership checks start comparing real rows named "none".
+    if (NO_TEAM_VALUES.includes(name.toLowerCase())) {
+        res.status(400).send({ message: `"${name}" means no team, so it cannot be a team name` });
+        return;
+    }
+
+    try {
+        const existing = await db.Team.findOne({ where: { name } });
+
+        if (existing) {
+            res.status(409).send({ message: 'A team with that name already exists' });
+            return;
+        }
+
+        const team = await db.Team.create({ name, description: req.body.description || null });
+
+        appLogger.info('Team created', {
+            eventType: 'Team Created',
+            teamId: team.id,
+            name,
+            createdBy: user.id,
+            timestamp: new Date().toISOString()
+        });
+
+        res.status(201).json({ id: team.id, name: team.name, description: team.description, memberCount: 0 });
+    } catch (error) {
+        res.status(500).send({ message: (error as Error).message });
+    }
+});
+
+/**
+ * Delete a team.
+ *
+ * Refused while anyone is still in it. Sequelize would happily leave those
+ * users pointing at a row that no longer exists, and a dangling teamId is
+ * worse than the sentinel this design removed: it matches nothing, so those
+ * people silently lose sight of their team's instances with no error anywhere.
+ */
+router.delete('/teams/:id', async (req: Request, res: Response): Promise<void> => {
+    const user = req.user as AccountUser | undefined;
+
+    if (!user || user.role !== UserRole.ADMIN) {
+        res.status(user ? 403 : 401).send({ message: 'Unauthorized' });
+        return;
+    }
+
+    try {
+        const team = await db.Team.findByPk(req.params.id);
+
+        if (!team) {
+            res.status(404).send({ message: 'No such team' });
+            return;
+        }
+
+        const memberCount = await db.User.count({ where: { teamId: team.id } });
+
+        if (memberCount > 0) {
+            res.status(409).send({
+                message: `${memberCount} user(s) are still in this team. Move them out first.`
+            });
+            return;
+        }
+
+        await team.destroy();
+
+        appLogger.warn('Team deleted', {
+            eventType: 'Team Deleted',
+            teamId: req.params.id,
+            deletedBy: user.id,
+            timestamp: new Date().toISOString()
+        });
+
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).send({ message: (error as Error).message });
+    }
+});
+
 // Update user's team (admin only)
 router.put('/users/:id/team', async (req: Request, res: Response): Promise<void> => {
     const currentUser = req.user as AccountUser;
