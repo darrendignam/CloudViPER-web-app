@@ -7,6 +7,18 @@ const RANDOM_STRING_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
 // this are rejected rather than folded, which would bias the low characters.
 const UNBIASED_BYTE_CEILING = 256 - (256 % RANDOM_STRING_ALPHABET.length);
 
+/**
+ * Email domains whose members are created as system administrators. Configured
+ * rather than hardcoded so a deployment that is not OPF's own does not silently
+ * grant administration to a domain it has nothing to do with.
+ */
+export function adminEmailDomains(): string[] {
+    return (process.env.ADMIN_EMAIL_DOMAINS || 'openpreservation.org')
+        .split(',')
+        .map((domain) => domain.trim().toLowerCase())
+        .filter(Boolean);
+}
+
 const helperFunctions = {
     sanitizeUsername: (name: string): string => {
         return name.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -19,9 +31,21 @@ const helperFunctions = {
             return email.toLowerCase().replace(/[^a-z0-9]/g, '');
         }
     },
+    /**
+     * The role a brand new Google sign-in should be created with.
+     *
+     * Anyone with an address at an admin domain becomes a system administrator
+     * on first sign-in. That is only safe because the domain's own identity
+     * provider decides who holds such an address; widen ADMIN_EMAIL_DOMAINS and
+     * you hand system administration to whoever controls that domain's mail.
+     *
+     * Applies to account creation only. An existing account keeps whatever role
+     * it already has, so a demotion cannot be undone by signing out and in.
+     */
     updateRoleIfAdmin: (email: string): UserRole => {
-        const domain = email.split('@')[1];
-        if (domain === 'openpreservation.org') {
+        const domain = String(email || '').split('@')[1]?.toLowerCase();
+
+        if (domain && adminEmailDomains().includes(domain)) {
             return UserRole.ADMIN;
         }
         return UserRole.USER;

@@ -53,14 +53,16 @@ describe('Email Relay', () => {
       expect(appLogger.info).toHaveBeenCalledWith('Email sent', expect.any(Object));
     });
 
-    it('should handle MailerSend errors gracefully', async () => {
+    it('should report a send failure rather than swallowing it', async () => {
+      // It used to log and return normally, so a caller could not tell a
+      // delivered invitation from an undelivered one. An invited user has no
+      // way into the system except the link in that mail, so the caller has to
+      // learn it never went.
       const error = new Error('MailerSend error');
       mockSend.mockRejectedValue(error);
 
-      await emailRelay.sendWelcomeEmail('test@example.com', 'testuser');
-      
-      // Wait a bit for the async error handling
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await expect(emailRelay.sendWelcomeEmail('test@example.com', 'testuser'))
+        .rejects.toThrow('MailerSend error');
 
       expect(appLogger.error).toHaveBeenCalledWith('Email send failed', expect.objectContaining({ error: 'MailerSend error' }));
     });
@@ -127,4 +129,25 @@ describe('Email Relay', () => {
       }
     });
   });
+});
+
+describe('isEmailConfigured', () => {
+    const ORIGINAL = process.env.MAILERSEND_API_KEY;
+
+    afterEach(() => {
+        if (ORIGINAL === undefined) delete process.env.MAILERSEND_API_KEY;
+        else process.env.MAILERSEND_API_KEY = ORIGINAL;
+    });
+
+    it('should be false without an API key', () => {
+        delete process.env.MAILERSEND_API_KEY;
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        expect(require('../../../utility/emailRelay').isEmailConfigured()).toBe(false);
+    });
+
+    it('should be true with an API key', () => {
+        process.env.MAILERSEND_API_KEY = 'a-key';
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        expect(require('../../../utility/emailRelay').isEmailConfigured()).toBe(true);
+    });
 });

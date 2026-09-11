@@ -461,8 +461,11 @@ router.post('/users/invite', async (req: Request, res: Response): Promise<void> 
             timestamp: new Date().toISOString()
         });
         
+        let invitationEmailSent = false;
+
         try {
             await emailRelay.sendInvitedEmail(req.body.email, newUsername, currentUser.username);
+            invitationEmailSent = true;
             
             // Log successful email sending
             appLogger.info('Invitation email sent', {
@@ -484,10 +487,20 @@ router.post('/users/invite', async (req: Request, res: Response): Promise<void> 
                 error: (emailError as Error).message,
                 timestamp: new Date().toISOString()
             });
-            // Continue execution - user was created successfully even if email failed
+            // The account exists either way, so this is not rolled back. It is
+            // reported instead: the invitation carries the password-reset link
+            // that is the invited user's only way in, so an admin who is not
+            // told it failed will assume the person simply has not got round to
+            // signing in.
         }
-        
-        res.status(200).send({ message: 'User invited successfully', user });
+
+        res.status(200).send({
+            message: invitationEmailSent
+                ? 'User invited successfully'
+                : 'Account created, but the invitation email could not be sent. Send them the password reset link manually.',
+            emailSent: invitationEmailSent,
+            user
+        });
     } catch (err: any) {
         // Log invitation failure
         appLogger.error('User invitation failed', {

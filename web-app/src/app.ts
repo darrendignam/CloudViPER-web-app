@@ -7,6 +7,8 @@ import { logSession, appLogger } from './config/logger';
 
 import configAuth from './config/auth';
 import { readIntEnv } from './utility/envConfig';
+import { isGoogleAuthConfigured } from './config/auth';
+import { isEmailConfigured } from './utility/emailRelay';
 
 
 
@@ -21,6 +23,23 @@ appLogger.info('Application starting', {
     dbUser: process.env.DB_USER,
     timestamp: new Date().toISOString()
 });
+
+// Say so at boot rather than at the moment someone is waiting on an invitation.
+// Both of these are optional, and both change who can get into the system, so
+// silence about them is the wrong default.
+if (!isEmailConfigured()) {
+    appLogger.warn('Outgoing email is not configured: invitations and password resets will not be delivered', {
+        eventType: 'Email Not Configured',
+        timestamp: new Date().toISOString()
+    });
+}
+
+if (!isGoogleAuthConfigured()) {
+    appLogger.warn('Google sign-in is not configured: only local accounts can sign in', {
+        eventType: 'Google Auth Not Configured',
+        timestamp: new Date().toISOString()
+    });
+}
 
 // Begin server setup
 app.use( bodyParser.urlencoded({ extended: true}) );

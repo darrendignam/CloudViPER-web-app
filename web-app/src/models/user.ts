@@ -267,7 +267,12 @@ export default (sequelize: Sequelize) => {
             
             if (!user) {
                 // Create a new user
-                const randomPassword = Math.random().toString(36).slice(-8);
+                // Never disclosed: the invitation directs the user to the
+                // password reset flow, or they sign in with Google. It is still
+                // a live credential on the account, so it comes from the same
+                // CSPRNG helper as everything else rather than from
+                // Math.random, whose output is predictable from a known seed.
+                const randomPassword = crypto.randomBytes(24).toString('base64url');
                 user = await User.register({
                     email,
                     username: email.split('@')[0],

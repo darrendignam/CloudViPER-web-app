@@ -362,8 +362,12 @@ describe('Account Routes Error Coverage Tests', () => {
         });
 
       // Should still succeed even if email fails
+      // The account is created either way, so this is not an error. But the
+      // admin is told the invitation did not go, because that mail carries the
+      // reset link which is the invited user's only way in.
       expect(response.status).toBe(200);
-      expect(response.body.message).toBe('User invited successfully');
+      expect(response.body.emailSent).toBe(false);
+      expect(response.body.message).toMatch(/could not be sent/i);
     });
 
     it('should reject non-admin users', async () => {

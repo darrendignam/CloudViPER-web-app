@@ -33,8 +33,20 @@ interface EmailRelay {
   sendResetEmail: (email: string, username: string, token: string) => Promise<void>;
 }
 
+/**
+ * Whether outgoing email can actually be sent.
+ *
+ * Worth checking before claiming an invitation was delivered: without a key
+ * MailerSend rejects at send time, and an invited user whose mail never arrives
+ * has no way in, because the invitation is what carries the password-reset
+ * link.
+ */
+export function isEmailConfigured(): boolean {
+    return Boolean(process.env.MAILERSEND_API_KEY);
+}
+
 const mailerSend = new MailerSend({
-  apiKey: process.env.MAILERSEND_API_KEY!,
+  apiKey: process.env.MAILERSEND_API_KEY || '',
 });
 
 const _footer =  '<h3>&nbsp;-&nbsp;CloudViPER team</h3><div style="font-size: 12px; color: grey; text-align: center; padding: 10px;">This is an unmanaged email account, and as a result cannot receive messages; do not reply to this message. If you need help and support, please reach out to <strong>sysadmin@openpreservation.org</strong></div>';
@@ -60,6 +72,7 @@ const emailRelay: EmailRelay = {
             appLogger.info('Email sent', { timestamp: new Date().toISOString() });
         } catch (error: any) {
             appLogger.error('Email send failed', { error: (error as Error)?.message ?? String(error), timestamp: new Date().toISOString() });
+            throw error;
         }
     },
     sendInvitedEmail: async (in_email: string, in_username: string, in_invitee: string): Promise<void> => {
@@ -88,6 +101,7 @@ const emailRelay: EmailRelay = {
             appLogger.info('Email sent', { timestamp: new Date().toISOString() });
         } catch (error: any) {
             appLogger.error('Email send failed', { error: (error as Error)?.message ?? String(error), timestamp: new Date().toISOString() });
+            throw error;
         }
     },
     sendResetEmail: async (in_email: string, in_username: string, in_token: string): Promise<void> => {
@@ -119,6 +133,7 @@ const emailRelay: EmailRelay = {
             appLogger.info('Email sent', { timestamp: new Date().toISOString() });
         } catch (error: any) {
             appLogger.error('Email send failed', { error: (error as Error)?.message ?? String(error), timestamp: new Date().toISOString() });
+            throw error;
         }
     },
 };
