@@ -306,7 +306,9 @@ describe('commitInstanceToImage', () => {
 
         const commands = mockContainerService.execInContainer.mock.calls.map((call: any) => call[1].join(' '));
         const firstPromote = commands.findIndex((command: string) => command.includes('/defaults'));
-        const reset = commands.findIndex((command: string) => command.includes('find /config'));
+        // Matched on what the step is for rather than on the exact shell, so
+        // changing how /config is cleared does not break a test about ordering.
+        const reset = commands.findIndex((command: string) => /rm -rf .*\$entry|chown abc:abc \/config/.test(command));
 
         expect(firstPromote).toBeGreaterThanOrEqual(0);
         expect(firstPromote).toBeLessThan(reset);
@@ -346,6 +348,21 @@ describe('commitInstanceToImage', () => {
     it('should refuse an instance with no container', async () => {
         await expect(containerImageService.commitInstanceToImage({ uuid: 'x' }, { name: 'Anything' }))
             .rejects.toThrow('no container to commit');
+    });
+
+    it('should leave bind mounts alone when clearing /config', async () => {
+        // Every real instance has the shared test corpus bind-mounted read-only
+        // at /config/test-corpus. A plain recursive delete fails on it with
+        // "Device or resource busy" and takes the whole commit down, which is
+        // exactly what happened the first time this ran against a real desktop
+        // rather than a bare probe container.
+        await containerImageService.commitInstanceToImage(instance, { name: 'Forensics Build' });
+
+        const reset = mockContainerService.execInContainer.mock.calls
+            .map((call: any) => call[1].join(' '))
+            .find((command: string) => command.includes('/config'));
+
+        expect(reset).toMatch(/mountpoint|proc\/mounts/);
     });
 
     it('should not commit if the /config reset fails', async () => {
