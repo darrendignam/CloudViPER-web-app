@@ -1,0 +1,17 @@
+# Local development overlay.
+#
+# Builds the application image from source instead of pulling the published
+# one. Deliberately separate: the appliance must not build, because a compiler
+# competing with running desktops for memory is how the host gets killed.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cloudviper-web-app:dev
+    environment:
+      - NODE_ENV=dev
+    ports:
+      - "3333:3000"

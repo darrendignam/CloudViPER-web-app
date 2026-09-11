@@ -12,9 +12,18 @@
 # exchange the way the old nginx-proxy arrangement did.
 services:
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    # Pulled, never built here.
+    #
+    # Building on the appliance means running a compiler alongside the desktops
+    # it is meant to be serving. On a small host that competes for the memory
+    # the desktops are using, and the kernel resolves the competition by killing
+    # something; it took the whole machine down once. CI already builds this
+    # image on a tag and publishes it, so the appliance runs the exact artefact
+    # that was tested rather than whatever a build under memory pressure
+    # produces.
+    #
+    # For local development: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+    image: ${APP_IMAGE:-ghcr.io/darrendignam/cloudviper-web-app:latest}
     container_name: cloud-viper-gui-app
     # expose, not ports: Traefik reaches this over the ingress network, so the
     # application is never published on the host directly.
@@ -33,6 +42,12 @@ services:
       # Docker daemon. Instance containers never receive this themselves.
       - /var/run/docker.sock:/var/run/docker.sock
       - ./scripts:/usr/src/app/scripts
+    # Bounded so the app can never again be the process that starves the host.
+    # Steady state is around 50MB; this is headroom, not a target.
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     depends_on:
       mysqldb:
         condition: service_healthy
