@@ -1599,3 +1599,42 @@ input.form-control:focus {
 .viper-launch-warning-actions .viper-launch-action:first-child {
   margin-left: 0;
 }
+
+/* Instance launch options (2.1) */
+.launch-options {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+.launch-options-label {
+  margin: 0;
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: #555555;
+}
+.launch-options-select {
+  width: auto;
+  min-width: 16rem;
+  border-radius: var(--radius-chrome, 0);
+}
+.launch-options-build {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #555555;
+}
+/* A build instance keeps sudo, so it should not look like an ordinary one. */
+.launch-build-note {
+  border-left: 4px solid var(--opf-pink, #C73079);
+  padding: 0.5rem 0.75rem;
+  margin-top: 0.75rem;
+  background: #fff;
+  font-size: 0.85rem;
+  color: #2c3e50;
+}
+.launch-error {
+  color: #b3202c;
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+}

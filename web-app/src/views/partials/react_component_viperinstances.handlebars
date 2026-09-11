@@ -242,6 +242,12 @@
             pending: true
           },
           showFilters: false,
+          // Image selection. Only some roles may choose, and the server refuses
+          // the rest, so the control only appears for those who can use it.
+          launchableImages: [],
+          selectedImageId: '',
+          buildMode: false,
+          launchError: null,
           // Screenshot carousel state
           screenshotCarousels: {}, // Store carousel data for each instance
           // Screenshot modal state
@@ -258,7 +264,22 @@
       componentDidMount() {
         this.fetchInstances();
         this.interval = setInterval(this.fetchInstances, 6000); // 10 seconds interval
+        if (this.canChooseImage()) {
+          this.fetchLaunchableImages();
+        }
       }
+
+      // Mirrors ROLES_THAT_MAY_CHOOSE on the server. Everyone else silently
+      // gets their team's default, which is the point of having a default.
+      canChooseImage = () => {
+        return ['admin', 'team_admin', 'team_leader'].indexOf(this.props.userRole) !== -1;
+      };
+
+      fetchLaunchableImages = () => {
+        fetchJson('/images/api/launchable')
+          .then(images => this.setState({ launchableImages: images }))
+          .catch(error => console.error('Could not load launchable images:', error));
+      };
 
       componentWillUnmount() {
         clearInterval(this.interval);
@@ -399,13 +420,26 @@
       }
 
       startNewInstance = () => {
-        fetch('/service/new-instance', { method: 'POST', credentials: 'same-origin' })
-          .then(response => {
-            if (response.ok) {
-              this.fetchInstances();
-            }
+        const { selectedImageId, buildMode } = this.state;
+        const body = {};
+
+        // Left blank means "whatever the default is", which is a different
+        // request from naming an image, so it is omitted rather than sent empty.
+        if (selectedImageId) body.imageId = Number(selectedImageId);
+        if (buildMode) body.buildMode = true;
+
+        this.setState({ launchError: null });
+
+        fetchJson('/service/new-instance', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        })
+          .then(() => {
+            this.setState({ buildMode: false });
+            this.fetchInstances();
           })
-          .catch(error => console.error('Error starting new instance:', error));
+          .catch(error => this.setState({ launchError: error.message }));
       }
 
       removeInstance = (dockerid) => {
@@ -868,7 +902,7 @@ Current Activity Score: ${data.summary.currentScore || 0}`);
       }
 
       render() {
-        const { instances, isLoading, error, selectedInstance, instanceDetails, detailsLoading, filters, showFilters, screenshotModal } = this.state;
+        const { instances, isLoading, error, selectedInstance, instanceDetails, detailsLoading, filters, showFilters, screenshotModal, launchableImages, selectedImageId, buildMode, launchError } = this.state;
         const filteredInstances = this.getFilteredInstances();
 
         if (isLoading) {
@@ -938,7 +972,49 @@ Current Activity Score: ${data.summary.currentScore || 0}`);
             </div>
 
             <div className="btn-container">
-              <button className="btn btn-primary" onClick={this.startNewInstance}>Start New Instance</button>
+              {this.canChooseImage() && (
+                <div className="launch-options">
+                  <label className="launch-options-label" htmlFor="launch-image">Image</label>
+                  <select
+                    id="launch-image"
+                    className="form-control form-control-sm launch-options-select"
+                    value={selectedImageId}
+                    onChange={(e) => this.setState({ selectedImageId: e.target.value })}
+                  >
+                    <option value="">Default for my team</option>
+                    {launchableImages.map(image => (
+                      <option key={image.id} value={image.id}>
+                        {image.name}{image.isGlobalDefault ? ' (system default)' : ''}
+                      </option>
+                    ))}
+                  </select>
+
+                  {this.props.userRole === 'admin' && (
+                    <label className="launch-options-build" title="Keeps sudo so this instance can be customised and saved as a new image">
+                      <input
+                        type="checkbox"
+                        checked={buildMode}
+                        onChange={(e) => this.setState({ buildMode: e.target.checked })}
+                      />{' '}
+                      Build instance
+                    </label>
+                  )}
+                </div>
+              )}
+
+              <button className="btn btn-primary" onClick={this.startNewInstance}>
+                {buildMode ? 'Start Build Instance' : 'Start New Instance'}
+              </button>
+
+              {buildMode && (
+                <p className="launch-build-note">
+                  A build instance keeps <strong>sudo</strong> so you can install and configure
+                  things inside it, then save the result as a new image. Ordinary
+                  instances are hardened and cannot be customised.
+                </p>
+              )}
+
+              {launchError && <p className="launch-error">{launchError}</p>}
             </div>
 
             {/* Instance Details Modal */}
