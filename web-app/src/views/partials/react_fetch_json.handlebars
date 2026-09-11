@@ -43,3 +43,44 @@
         return response.json();
       });
   }
+
+  // One event stream per page, shared by every component that wants live data.
+  //
+  // Polling meant each component asked independently on its own timer, so a
+  // dashboard with three live panels made three requests every few seconds
+  // whether or not anything had changed. EventSource reconnects on its own
+  // after a drop, which is most of why this is not a raw WebSocket: the
+  // traffic here only ever goes one way.
+  var dashboardFeed = (function () {
+    var source = null;
+    var listeners = {};
+
+    function ensure() {
+      if (source) return source;
+      source = new EventSource('/service/events', { withCredentials: true });
+      Object.keys(listeners).forEach(bind);
+      return source;
+    }
+
+    function bind(event) {
+      source.addEventListener(event, function (message) {
+        var payload;
+        try { payload = JSON.parse(message.data); }
+        catch (e) { return; }
+        (listeners[event] || []).forEach(function (fn) { fn(payload); });
+      });
+    }
+
+    return {
+      on: function (event, handler) {
+        var first = !listeners[event];
+        listeners[event] = (listeners[event] || []).concat(handler);
+        var s = ensure();
+        if (first && s) bind(event);
+
+        return function off() {
+          listeners[event] = (listeners[event] || []).filter(function (fn) { return fn !== handler; });
+        };
+      }
+    };
+  })();

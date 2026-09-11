@@ -44,6 +44,10 @@ export interface IContainerService {
   removeImage(reference: string, options?: any): Promise<void>;
   commitContainer(containerId: string, options: any): Promise<any>;
 
+  // Host and container telemetry
+  info(): Promise<any>;
+  containerStats(containerId: string): Promise<any>;
+
   // Utility method to get container
   getContainer(containerId: string): any;
 
@@ -304,6 +308,21 @@ export class DockerContainerService implements IContainerService {
 
   async commitContainer(containerId: string, options: any): Promise<any> {
     return this.docker.getContainer(containerId).commit(options);
+  }
+
+  async info(): Promise<any> {
+    return this.docker.info();
+  }
+
+  /**
+   * A single stats sample for one container.
+   *
+   * stream:false still returns precpu_stats alongside cpu_stats, which is what
+   * makes a CPU percentage possible from one call: the figure is a delta
+   * between two cumulative counters, not a value Docker reports directly.
+   */
+  async containerStats(containerId: string): Promise<any> {
+    return this.docker.getContainer(containerId).stats({ stream: false });
   }
 
   getContainer(containerId: string): any {

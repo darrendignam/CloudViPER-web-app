@@ -10,6 +10,7 @@ import { appLogger } from '../config/logger';
 import { UserRole } from '../types/UserRole';
 import containerService from '../services/ContainerService';
 import viperInstanceService from '../services/ViperInstanceService';
+import systemStatsService from '../services/SystemStatsService';
 
 
 const router = express.Router();
@@ -17,6 +18,10 @@ const router = express.Router();
 // Short by design: the readiness probe is polled from the launch page while a
 // container starts, so a slow answer is as good as a miss.
 const INSTANCE_PROBE_TIMEOUT_MS = readIntEnv('INSTANCE_PROBE_TIMEOUT_MS', 3000);
+
+// How often the dashboard feed pushes. Each tick samples every instance
+// container, so this is a real cost on the host, not just on the client.
+const DASHBOARD_STREAM_INTERVAL_MS = readIntEnv('DASHBOARD_STREAM_INTERVAL_MS', 5000);
 // Using containerService instead of direct Docker instance
 // const docker = new Docker({ socketPath: '/var/run/docker.sock' }); // Keep for compatibility with existing code
 
@@ -884,6 +889,119 @@ router.get('/launch/:instanceUUID/ready', async (req: Request, res: Response): P
         });
         res.json({ reachable: false });
     }
+});
+
+/**
+ * The instances a user may see, scoped by role.
+ *
+ * Extracted so the live feed and the REST route cannot disagree. They were
+ * about to be two copies of the same rule, and a feed that showed a different
+ * set from the page it feeds is a disclosure bug waiting to be written.
+ *
+ * Admins see everything; team admins and leaders see their team's; everyone
+ * else sees their own. A user with no team sees only their own, because a null
+ * teamId matches nobody, including other teamless users.
+ */
+const INSTANCE_LIST_INCLUDE = (): any[] => [
+    { model: db.User, as: 'ownerUser', attributes: ['id', 'username', 'email', 'firstName', 'lastName'] },
+    { model: db.Screenshot, as: 'screenshots', attributes: ['id', 'capturedAt', 'receivedAt'], limit: 1, order: [['createdAt', 'DESC']], required: false },
+    { model: db.Activity, as: 'activities', attributes: ['id', 'activityScore', 'reportedAt', 'receivedAt'], limit: 1, order: [['createdAt', 'DESC']], required: false }
+];
+
+async function listInstancesFor(user: ServiceUser): Promise<any[]> {
+    const common = {
+        attributes: { exclude: INSTANCE_HIDDEN_ATTRIBUTES },
+        include: INSTANCE_LIST_INCLUDE(),
+        order: [['createdAt', 'DESC']] as any
+    };
+
+    if (user.role === UserRole.ADMIN) {
+        return db.ViperInstance.findAll(common);
+    }
+
+    if ((user.role === UserRole.TEAM_ADMIN || user.role === UserRole.TEAM_LEADER) && user.teamId) {
+        const teamUsers = await db.User.findAll({ where: { teamId: user.teamId }, attributes: ['id'] });
+        return db.ViperInstance.findAll({ ...common, where: { owner: teamUsers.map((u: any) => u.id) } });
+    }
+
+    return db.ViperInstance.findAll({ ...common, where: { owner: user.id } });
+}
+
+/**
+ * Live dashboard feed.
+ *
+ * Replaces six-second polling. Server-sent events rather than WebSockets
+ * because the traffic is entirely one way: the browser never tells the server
+ * anything over this channel, and EventSource reconnects by itself, which a
+ * raw WebSocket does not.
+ *
+ * Each client holds an open socket for as long as its dashboard is open, so
+ * the interval is per-connection and cleared on close. Forgetting that is how
+ * a page refresh becomes a permanent leak of one timer per visit.
+ */
+router.get('/events', async (req: Request, res: Response): Promise<void> => {
+    const user = req.user as ServiceUser | undefined;
+    const permissionCheck = checkUserPermission(user, [
+        UserRole.TESTING, UserRole.MEMBER, UserRole.SUBSCRIBER,
+        UserRole.TEAM_LEADER, UserRole.TEAM_ADMIN, UserRole.ADMIN
+    ]);
+
+    if (!permissionCheck.authorized) {
+        res.status(user ? 403 : 401).json({ error: permissionCheck.reason });
+        return;
+    }
+
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        // Traefik does not buffer, but a proxy added later might, and a buffered
+        // event stream is a stream that never arrives.
+        'X-Accel-Buffering': 'no'
+    });
+    res.flushHeaders?.();
+
+    // Only system admins see host telemetry; everyone else gets their own
+    // instance list and nothing about the machine it runs on.
+    const includeStats = user!.role === UserRole.ADMIN;
+
+    let closed = false;
+
+    const send = (event: string, payload: unknown) => {
+        if (closed) return;
+        res.write(`event: ${event}\n`);
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    const tick = async () => {
+        if (closed) return;
+
+        try {
+            const instances = await listInstancesFor(user!);
+            send('instances', instances);
+
+            if (includeStats) {
+                send('stats', await systemStatsService.collect());
+            }
+        } catch (error) {
+            // Reported on the stream rather than by closing it: a transient
+            // database blip should not make every dashboard reconnect at once.
+            send('feed-error', { message: (error as Error).message });
+        }
+    };
+
+    send('hello', { interval: DASHBOARD_STREAM_INTERVAL_MS, stats: includeStats });
+    await tick();
+
+    const timer = setInterval(tick, DASHBOARD_STREAM_INTERVAL_MS);
+    // Comment frames keep intermediaries from treating a quiet stream as dead.
+    const heartbeat = setInterval(() => { if (!closed) res.write(': keep-alive\n\n'); }, 20000);
+
+    req.on('close', () => {
+        closed = true;
+        clearInterval(timer);
+        clearInterval(heartbeat);
+    });
 });
 
 /**

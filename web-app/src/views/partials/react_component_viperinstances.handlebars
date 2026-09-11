@@ -270,8 +270,15 @@
       }
 
       componentDidMount() {
-        this.fetchInstances();
-        this.interval = setInterval(this.fetchInstances, 6000); // 10 seconds interval
+        // The stream pushes the first list immediately on connect, so there is
+        // no separate initial fetch; a request here would only duplicate it.
+        this.unsubscribe = dashboardFeed.on('instances', (instances) => {
+          this.setState({ instances, isLoading: false, error: null });
+        });
+        this.unsubscribeError = dashboardFeed.on('feed-error', (payload) => {
+          this.setState({ error: payload.message, isLoading: false });
+        });
+
         if (this.canChooseImage()) {
           this.fetchLaunchableImages();
         }
@@ -330,7 +337,8 @@
       };
 
       componentWillUnmount() {
-        clearInterval(this.interval);
+        if (this.unsubscribe) this.unsubscribe();
+        if (this.unsubscribeError) this.unsubscribeError();
       }
 
       fetchInstances = () => {

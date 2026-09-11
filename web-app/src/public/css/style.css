@@ -1653,3 +1653,74 @@ input.form-control:focus {
 .save-image-warning p {
   margin: 0.4rem 0 0;
 }
+
+/* Live server load (2.1).
+   Flat and square like the rest of the 2.0 chrome. Colour is never the only
+   signal: every meter carries its percentage and a plain-language detail line,
+   so the bars are reinforcement rather than the message (WCAG 1.4.1). */
+.server-load {
+  border: 1px solid var(--opf-blue, #137DA4);
+  border-radius: var(--radius-chrome, 0);
+  background: #fff;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.25rem;
+}
+.server-load-title {
+  margin: 0 0 0.9rem;
+  font-size: 1.05rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.server-load-live {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #fff;
+  background: var(--opf-pink, #C73079);
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--radius-chrome, 0);
+}
+.server-load-subtitle {
+  margin: 1.25rem 0 0.5rem;
+  font-size: 0.95rem;
+}
+.server-load-containers {
+  margin: 0.75rem 0 0;
+  font-size: 0.85rem;
+  color: #555555;
+}
+.server-load-meters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1rem;
+}
+.stat-meter-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.25rem;
+}
+.stat-meter-label { font-weight: 600; font-size: 0.85rem; }
+.stat-meter-value { font-variant-numeric: tabular-nums; font-size: 0.85rem; color: #555555; }
+.stat-meter-track {
+  height: 0.6rem;
+  background: #e9ecef;
+  border: 1px solid #dee2e6;
+  border-radius: var(--radius-chrome, 0);
+  overflow: hidden;
+}
+.stat-meter-fill {
+  height: 100%;
+  background: var(--opf-blue, #137DA4);
+  transition: width 0.4s ease;
+}
+.stat-meter-fill.is-warning  { background: #b35c00; }
+.stat-meter-fill.is-critical { background: #b3202c; }
+.stat-meter-detail {
+  margin-top: 0.3rem;
+  font-size: 0.78rem;
+  color: #555555;
+}
+.instance-load-table { margin-bottom: 0; }
+.instance-load-name { font-family: monospace; font-size: 0.82rem; }

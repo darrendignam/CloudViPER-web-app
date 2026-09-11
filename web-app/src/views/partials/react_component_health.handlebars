@@ -6,22 +6,63 @@ class SystemHealth extends React.Component {
             healthData: null,
             isLoading: true,
             error: null,
-            lastUpdated: null
+            lastUpdated: null,
+            // Live host and per-instance telemetry, pushed rather than polled.
+            liveStats: null
         };
     }
 
+    formatBytes = (bytes) => {
+        if (bytes === null || bytes === undefined) return 'unknown';
+        const gb = bytes / (1024 ** 3);
+        return gb >= 1 ? gb.toFixed(1) + ' GB' : (bytes / (1024 ** 2)).toFixed(0) + ' MB';
+    };
+
+    // Green below two thirds, amber past that, red past ninety.
+    meterState = (percent) => {
+        if (percent === null || percent === undefined) return '';
+        if (percent >= 90) return ' is-critical';
+        if (percent >= 66) return ' is-warning';
+        return '';
+    };
+
+    renderMeter = (label, percent, detail) => (
+        <div className="stat-meter" key={label}>
+            <div className="stat-meter-head">
+                <span className="stat-meter-label">{label}</span>
+                <span className="stat-meter-value">
+                    {percent === null || percent === undefined ? 'unknown' : percent + '%'}
+                </span>
+            </div>
+            <div className="stat-meter-track">
+                <div
+                    className={'stat-meter-fill' + this.meterState(percent)}
+                    style={{ width: Math.min(100, Math.max(0, percent || 0)) + '%' }}
+                />
+            </div>
+            {detail && <div className="stat-meter-detail">{detail}</div>}
+        </div>
+    );
+
     componentDidMount() {
         this.fetchHealthData();
-        // Auto-refresh every 30 seconds
+        // The component health block still comes from its own endpoint; only
+        // the live figures move to the stream, which pushes them every few
+        // seconds without a request per panel.
         this.interval = setInterval(() => {
             this.fetchHealthData();
         }, 30000);
+
+        this.unsubscribeStats = dashboardFeed.on('stats', (liveStats) => {
+            this.setState({ liveStats });
+        });
     }
 
     componentWillUnmount() {
         if (this.interval) {
             clearInterval(this.interval);
         }
+        if (this.unsubscribeStats) this.unsubscribeStats();
     }
 
     componentDidUpdate() {
@@ -87,7 +128,7 @@ class SystemHealth extends React.Component {
     }
 
     render() {
-        const { healthData, isLoading, error, lastUpdated } = this.state;
+        const { healthData, isLoading, error, lastUpdated, liveStats } = this.state;
 
         if (isLoading) {
             return (
@@ -116,8 +157,71 @@ class SystemHealth extends React.Component {
 
         const statusInfo = this.getStatusIcon(healthData.status);
 
+        const host = liveStats && liveStats.host;
+
         return (
             <div className="health-monitor">
+                {host && (
+                    <div className="server-load">
+                        <h4 className="server-load-title">
+                            <i className="fas fa-server"></i> Server load
+                            <span className="server-load-live">live</span>
+                        </h4>
+
+                        <div className="server-load-meters">
+                            {this.renderMeter(
+                                'CPU load',
+                                host.loadPercent,
+                                host.loadAverage && host.loadAverage.length
+                                    ? 'load ' + host.loadAverage.join(', ') + ' across ' + host.cpuCount + ' cores'
+                                    : null
+                            )}
+
+                            {host.memory && this.renderMeter(
+                                'Memory',
+                                host.memory.usedPercent,
+                                this.formatBytes(host.memory.usedBytes) + ' of ' +
+                                this.formatBytes(host.memory.totalBytes) + ' used, ' +
+                                this.formatBytes(host.memory.availableBytes) + ' available'
+                            )}
+
+                            {host.disk && this.renderMeter(
+                                'Disk',
+                                host.disk.usedPercent,
+                                this.formatBytes(host.disk.freeBytes) + ' free of ' +
+                                this.formatBytes(host.disk.totalBytes) +
+                                '. A ViPER image is around 10 GB.'
+                            )}
+                        </div>
+
+                        {host.containers && (
+                            <p className="server-load-containers">
+                                {host.containers.running} of {host.containers.total} containers running
+                            </p>
+                        )}
+
+                        <h5 className="server-load-subtitle">Desktops</h5>
+                        {liveStats.instances.length === 0 ? (
+                            <p className="text-muted">No desktops are running.</p>
+                        ) : (
+                            <table className="table table-sm instance-load-table">
+                                <thead>
+                                    <tr><th>Instance</th><th>CPU</th><th>Memory</th></tr>
+                                </thead>
+                                <tbody>
+                                    {liveStats.instances.map(instance => (
+                                        <tr key={instance.name}>
+                                            <td className="instance-load-name">{instance.name}</td>
+                                            <td>{instance.cpuPercent === null ? '-' : instance.cpuPercent + '%'}</td>
+                                            <td>{this.formatBytes(instance.memoryBytes)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+                    </div>
+                )}
+
                 <div className="health-header">
                     <div className="health-status">
                         <i className={statusInfo.icon + ' health-status-icon'} 
