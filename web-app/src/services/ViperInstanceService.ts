@@ -993,9 +993,27 @@ class ViperInstanceService {
       });
       return true;
     } catch (removeError) {
+      const message = (removeError as Error).message || '';
+
+      // Already gone is the outcome this was asking for, so it counts as
+      // success. Two terminations of the same instance race constantly in
+      // practice: a click in the dashboard and a scripted call, or an impatient
+      // user clicking twice because the button gave no feedback. The loser used
+      // to report "could not be removed" about a container that had in fact
+      // just been removed, which reads as a failure needing attention.
+      if (/no such container|404/i.test(message)) {
+        appLogger.info('Container was already gone', {
+          eventType: 'Container Already Removed',
+          instanceId,
+          containerId,
+          timestamp: new Date().toISOString()
+        });
+        return true;
+      }
+
       appLogger.warn('Container removal failed', {
         eventType: 'Container Remove Failed',
-        error: (removeError as Error).message,
+        error: message,
         instanceId,
         containerId,
         timestamp: new Date().toISOString()

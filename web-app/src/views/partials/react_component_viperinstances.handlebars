@@ -237,7 +237,10 @@
             inactive: true,
             building: true,
             created: true,
-            deleted: true,
+            // Off by default. A terminated instance is a historical record, not
+            // something anyone is managing, and rows grow without bound as the
+            // appliance is used.
+            deleted: false,
             error: true,
             pending: true
           },
@@ -248,6 +251,11 @@
           selectedImageId: '',
           buildMode: false,
           launchError: null,
+          // Which buttons are mid-request. Without this a click looks like
+          // nothing happened, so people click again, and two terminations of
+          // the same instance race each other.
+          starting: false,
+          removing: {},
           // Saving a build instance as an image
           saveTarget: null,
           saveName: '',
@@ -476,7 +484,8 @@
       }
 
       startNewInstance = () => {
-        const { selectedImageId, buildMode } = this.state;
+        const { selectedImageId, buildMode, starting } = this.state;
+        if (starting) return;
         const body = {};
 
         // Left blank means "whatever the default is", which is a different
@@ -484,7 +493,7 @@
         if (selectedImageId) body.imageId = Number(selectedImageId);
         if (buildMode) body.buildMode = true;
 
-        this.setState({ launchError: null });
+        this.setState({ launchError: null, starting: true });
 
         fetchJson('/service/new-instance', {
           method: 'POST',
@@ -492,31 +501,45 @@
           body: JSON.stringify(body)
         })
           .then(() => {
-            this.setState({ buildMode: false });
-            this.fetchInstances();
+            // The feed pushes the new list on its next tick, so there is no
+            // fetch here; the button simply stops being busy.
+            this.setState({ buildMode: false, starting: false });
           })
-          .catch(error => this.setState({ launchError: error.message }));
+          .catch(error => this.setState({ launchError: error.message, starting: false }));
       }
 
       removeInstance = (dockerid) => {
-        fetch('/service/terminate-instance/' + dockerid, { method: 'POST', credentials: 'same-origin' })
-          .then(response => {
-            if (response.ok) {
-              this.setState(prevState => ({
-                instances: prevState.instances.filter(instance => instance.dockerid !== dockerid)
-              }));
-              return;
-            }
-            // The row is marked deleted even when the container survives, so
-            // refetch rather than guess which of the two happened.
-            return response.json()
-              .catch(() => ({}))
-              .then(body => {
-                console.error('Error terminating instance:', body.error || response.status);
-                this.fetchInstances();
-              });
+        // Ignore a second click on an instance already being removed. Two
+        // concurrent terminations of the same container race, and the loser is
+        // told it failed about a container that was in fact removed.
+        if (this.state.removing[dockerid]) return;
+
+        this.setState(prev => ({
+          removing: Object.assign({}, prev.removing, { [dockerid]: true }),
+          launchError: null
+        }));
+
+        const done = () => this.setState(prev => {
+          const removing = Object.assign({}, prev.removing);
+          delete removing[dockerid];
+          return { removing };
+        });
+
+        fetchJson('/service/terminate-instance/' + dockerid, { method: 'POST' })
+          .then(() => {
+            // Drop it immediately so the row does not linger while waiting for
+            // the next push; the feed will confirm it shortly.
+            this.setState(prev => ({
+              instances: prev.instances.filter(instance => instance.dockerid !== dockerid)
+            }));
+            done();
           })
-          .catch(error => console.error('Error terminating instance:', error));
+          .catch(error => {
+            // The row is marked deleted even when the container survives, so
+            // the message matters rather than being swallowed to the console.
+            this.setState({ launchError: error.message });
+            done();
+          });
       }
 
       formatOwnerInfo = (instance) => {
@@ -958,7 +981,7 @@ Current Activity Score: ${data.summary.currentScore || 0}`);
       }
 
       render() {
-        const { instances, isLoading, error, selectedInstance, instanceDetails, detailsLoading, filters, showFilters, screenshotModal, launchableImages, selectedImageId, buildMode, launchError, saveTarget, saveName, saveTag, saveDescription, savePromote, saving, saveError } = this.state;
+        const { instances, isLoading, error, selectedInstance, instanceDetails, detailsLoading, filters, showFilters, screenshotModal, launchableImages, selectedImageId, buildMode, launchError, starting, removing, saveTarget, saveName, saveTag, saveDescription, savePromote, saving, saveError } = this.state;
         const filteredInstances = this.getFilteredInstances();
 
         if (isLoading) {
@@ -1058,8 +1081,10 @@ Current Activity Score: ${data.summary.currentScore || 0}`);
                 </div>
               )}
 
-              <button className="btn btn-primary" onClick={this.startNewInstance}>
-                {buildMode ? 'Start Build Instance' : 'Start New Instance'}
+              <button className="btn btn-primary" onClick={this.startNewInstance} disabled={starting}>
+                {starting
+                  ? <span><i className="fas fa-spinner fa-spin"></i> Starting, this takes a moment...</span>
+                  : <span>{buildMode ? 'Start Build Instance' : 'Start New Instance'}</span>}
               </button>
 
               {buildMode && (
@@ -1387,9 +1412,11 @@ Current Activity Score: ${data.summary.currentScore || 0}`);
                                 <button 
                                   className={'btn btn-danger ' + (instance.status === 'deleted' ? 'disabled' : '')} 
                                   onClick={() => this.removeInstance(instance.dockerid)} 
-                                  disabled={instance.status === 'deleted'}
+                                  disabled={instance.status === 'deleted' || !!removing[instance.dockerid]}
                                 >
-                                  <i className="fas fa-trash"></i> Remove Instance
+                                  {removing[instance.dockerid]
+                                    ? <span><i className="fas fa-spinner fa-spin"></i> Removing...</span>
+                                    : <span><i className="fas fa-trash"></i> Remove Instance</span>}
                                 </button>
                               </div>
                             </div>

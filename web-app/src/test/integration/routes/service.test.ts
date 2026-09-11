@@ -702,8 +702,22 @@ describe('Service Routes', () => {
         // removed, so termination did what it promised. Here the container is
         // still running while the row is already marked deleted, which hides it
         // from the orphan reclaim path. Reporting success would strand it.
+        it('should treat an already-removed container as success', async () => {
+            // Two terminations of the same instance race in practice: a click in
+            // the dashboard and a scripted call, or two admins at once. The
+            // loser gets a 404 about a container that has just been removed,
+            // which is the outcome it wanted, not a failure needing attention.
+            mockContainer.remove.mockRejectedValue(new Error('(HTTP code 404) no such container'));
+
+            const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
+            const response = await request(testApp).post('/service/terminate-instance/test-container-id');
+
+            expect(response.status).toBe(200);
+            expect(response.body.success).toBe(true);
+        }, 10000);
+
         it('should report failure when the container could not be removed', async () => {
-            mockContainer.remove.mockRejectedValue(new Error('Remove failed'));
+            mockContainer.remove.mockRejectedValue(new Error('device or resource busy'));
 
             const testApp = createTestApp({ id: 1, username: 'admin', email: 'admin@test.com', role: UserRole.ADMIN });
             const response = await request(testApp).post('/service/terminate-instance/test-container-id');
