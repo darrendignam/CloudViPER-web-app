@@ -43,7 +43,7 @@ interface UserAttributes {
     firstName?: string;
     lastName?: string;
     role: UserRole; // Use enum type for TypeScript
-    team?: string; // Team name, default is 'none'
+    teamId?: number | null; // Null means no team. There is no sentinel value.
     invitedById?: number; // ID of the user who invited this user
     oauthID?: string;
     oauthProvider?: string;
@@ -65,7 +65,7 @@ export default (sequelize: Sequelize) => {
         public firstName?: string;
         public lastName?: string;
         public role!: UserRole;
-        public team?: string;
+        public teamId?: number | null;
         public invitedById?: number;
         public oauthID?: string;
         public oauthProvider?: string;
@@ -173,7 +173,7 @@ export default (sequelize: Sequelize) => {
         }
 
         public isInTeam(): boolean {
-            return !!this.team && this.team !== 'none';
+            return this.teamId !== null && this.teamId !== undefined;
         }
 
         public async getTeamMembers(): Promise<User[]> {
@@ -183,7 +183,7 @@ export default (sequelize: Sequelize) => {
             
             return User.findAll({
                 where: {
-                    team: this.team
+                    teamId: this.teamId
                 }
             });
         }
@@ -209,28 +209,43 @@ export default (sequelize: Sequelize) => {
         // Team management methods
         public static async setTeamAdmin(userId: number, teamName: string): Promise<User | null> {
             const user = await User.findByPk(userId);
-            
+
             if (!user) {
                 return null;
             }
-            
-            // Check if team already has an admin
+
+            const team = await User.resolveTeam(teamName);
+
             const existingAdmin = await User.findOne({
                 where: {
-                    team: teamName,
+                    teamId: team.id,
                     role: UserRole.TEAM_ADMIN
                 }
             });
-            
+
             if (existingAdmin) {
                 throw new Error(`Team ${teamName} already has an admin`);
             }
-            
-            user.team = teamName;
+
+            user.teamId = team.id;
             user.role = UserRole.TEAM_ADMIN;
             await user.save();
-            
+
             return user;
+        }
+
+        /**
+         * Find a team by name, creating it if this is the first member.
+         * Teams are named by the person who forms one, so there is no separate
+         * step in which a team is registered before anyone can join it.
+         */
+        public static async resolveTeam(teamName: string): Promise<any> {
+            const models = sequelize.models as any;
+            const [team] = await models.Team.findOrCreate({
+                where: { name: teamName },
+                defaults: { name: teamName }
+            });
+            return team;
         }
 
         public async inviteUser(email: string, role: UserRole = UserRole.MEMBER): Promise<User | null> {
@@ -258,14 +273,16 @@ export default (sequelize: Sequelize) => {
                     username: email.split('@')[0],
                     role,
                     invitedById: this.id,
-                    team: this.role === UserRole.ADMIN ? 'none' : this.team
+                    // A system admin invites into no team; a team admin or
+                    // leader can only invite into their own.
+                    teamId: this.role === UserRole.ADMIN ? null : this.teamId
                 }, randomPassword);
             } else {
                 // Update existing user
                 if (this.role === UserRole.ADMIN) {
                     user.role = role;
                 } else {
-                    user.team = this.team;
+                    user.teamId = this.teamId;
                     user.role = role;
                 }
                 
@@ -281,6 +298,11 @@ export default (sequelize: Sequelize) => {
             User.hasMany(models.ViperInstance, {
                 foreignKey: 'owner',
                 as: 'viperInstances'
+            });
+
+            User.belongsTo(models.Team, {
+                foreignKey: 'teamId',
+                as: 'team'
             });
             
             // Self-referencing association for invitation tracking
@@ -315,10 +337,10 @@ export default (sequelize: Sequelize) => {
                 },
                 defaultValue: UserRole.USER
             },
-            team: { 
-                type: DataTypes.STRING, 
+            teamId: {
+                type: DataTypes.INTEGER,
                 allowNull: true,
-                defaultValue: 'none' 
+                defaultValue: null
             },
             invitedById: { 
                 type: DataTypes.INTEGER, 

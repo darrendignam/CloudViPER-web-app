@@ -10,6 +10,7 @@ import { UserRole } from '../types/UserRole';
 import { readAndProcessScript, validateRequiredScripts } from '../utility/scriptManager';
 import containerService from './ContainerService';
 import selkiesControlPlane, { SelkiesRole, SELKIES_CONTROL_PORT } from './SelkiesControlPlane';
+import containerImageService from './ContainerImageService';
 
 
 const DOMAIN_NAME = process.env.DOMAIN_NAME || 'cloudviper.org';
@@ -22,7 +23,37 @@ export const CLOUDVIPER_INSTANCE_LABEL = 'org.openpreservation.cloudviper.instan
 // cannot drift: a published port that nothing connects to is silent.
 const SELKIES_CONTROL_PORT_SPEC = `${SELKIES_CONTROL_PORT}/tcp`;
 
-const VIPER_IMAGE = process.env.VIPER_IMAGE || 'ghcr.io/darrendignam/opf-cloud-viper:2.0.0-alpha';
+// The Docker network Traefik watches. Instances join it in production so the
+// proxy can see them; in development the app runs on the host and reaches
+// containers through published ports instead.
+const INGRESS_NETWORK = process.env.INGRESS_NETWORK || 'cloudviper_ingress';
+
+// Traefik's certificate resolver, as named in traefik.yml. It resolves a
+// wildcard for the instance domain, so a desktop is reachable the moment
+// Traefik sees the container: there is no per-instance ACME exchange, which is
+// what the old nginx-proxy path needed its ACME_PRE_HOOK and ACME_POST_HOOK for.
+const TRAEFIK_CERT_RESOLVER = process.env.TRAEFIK_CERT_RESOLVER || 'letsencrypt';
+
+// Grace period before an instance is called active, covering Traefik's provider
+// refresh. Not a certificate wait: the wildcard is issued long before any
+// instance exists.
+const INSTANCE_ACTIVATION_DELAY_MS = readIntEnv('INSTANCE_ACTIVATION_DELAY_MS', 5000);
+
+// Traefik reads routing from container labels rather than from environment
+// variables, which is the whole difference between this and the nginx-proxy
+// arrangement it replaced.
+function traefikRoutingLabels(containerName: string, instanceURL: string): Record<string, string> {
+  return {
+    'traefik.enable': 'true',
+    [`traefik.http.routers.${containerName}.rule`]: `Host(\`${instanceURL}\`)`,
+    [`traefik.http.routers.${containerName}.entrypoints`]: 'websecure',
+    [`traefik.http.routers.${containerName}.tls`]: 'true',
+    [`traefik.http.routers.${containerName}.tls.certresolver`]: TRAEFIK_CERT_RESOLVER,
+    [`traefik.http.services.${containerName}.loadbalancer.server.port`]: '3000',
+    'traefik.docker.network': INGRESS_NETWORK
+  };
+}
+
 const TEST_CORPUS_HOST_PATH = process.env.TEST_CORPUS_HOST_PATH
   || '/var/viper-docker-project/volumes/test-corpus/test-root/corpora';
 
@@ -32,7 +63,7 @@ export interface ServiceUser {
   username: string;
   email: string;
   role: UserRole;
-  team?: string;
+  teamId?: number | null;
   invitedById?: number;
 }
 
@@ -86,7 +117,19 @@ class ViperInstanceService {
   /**
    * Creates a new Viper instance
    */
-  async createInstance(user: ServiceUser): Promise<any> {
+  /**
+   * Create an instance.
+   *
+   * `buildMode` produces an instance that keeps sudo, so a system admin can
+   * customise it and commit the result as a new image. It is deliberately a
+   * separate path rather than a switch on the normal one: every other instance
+   * stays hardened, and which kind this is stays visible on the row.
+   */
+  async createInstance(
+    user: ServiceUser,
+    requestedImageId?: number | null,
+    options: { buildMode?: boolean } = {}
+  ): Promise<any> {
     const ownerId = user.id;
     const instanceUUID = helperFunctions.generateRandomString(12);
     const masterToken = helperFunctions.generateSessionToken();
@@ -94,8 +137,19 @@ class ViperInstanceService {
     const instanceURL = `${instanceUUID}.${process.env.APP_HOST}`;
     const containerName = `viper-cloud-${instanceUUID}`;
     
+    const buildMode = options.buildMode === true;
+
+    if (buildMode && user.role !== UserRole.ADMIN) {
+      throw new Error('Only system administrators can create build instances');
+    }
+
+    const image = await containerImageService.resolveImageForUser(user, requestedImageId);
+
     appLogger.info('Starting instance creation', {
       eventType: 'Instance Creation Started',
+      image: image.reference,
+      imageOrigin: image.origin,
+      buildMode,
       userId: user.id,
       userEmail: user.email,
       userRole: user.role,
@@ -105,10 +159,6 @@ class ViperInstanceService {
     });
 
     const envVars = [
-      "VIRTUAL_PORT=3000",
-      "VIRTUAL_HOST=" + instanceURL,
-      "LETSENCRYPT_HOST=" + instanceURL,
-      "LETSENCRYPT_EMAIL=sysadmin@openpreservation.org",
       "SELKIES_MASTER_TOKEN=" + masterToken,
       "SELKIES_ENABLE_SHARING=false",
       "SELKIES_ENABLE_COLLAB=false",
@@ -116,12 +166,6 @@ class ViperInstanceService {
       "TITLE=ViPER",
       "PUID=1000",
       "PGID=1000",
-      "ACME_PRE_HOOK=curl " + (process.env.SERVICE_URL || (process.env.NODE_ENV === 'production' ? 
-          `http://cloud-viper-gui-app:3000` : 
-          `http://localhost:3000`)) + "/service/set-status-instance/"+statusKey+"/begin_cert",
-      "ACME_POST_HOOK=curl " + (process.env.SERVICE_URL || (process.env.NODE_ENV === 'production' ? 
-          `http://cloud-viper-gui-app:3000` : 
-          `http://localhost:3000`)) + "/service/set-status-instance/"+statusKey+"/active",
     ];
     
     appLogger.info('Container environment prepared', {
@@ -146,7 +190,7 @@ class ViperInstanceService {
       const devPorts = isDev ? { web: webPort, control: devControlPort! } : null;
 
       const containerOptions: any = {
-        Image: VIPER_IMAGE,
+        Image: image.reference,
         name: containerName,
         HostConfig: {
           ShmSize: 1024 * 1024 * 1024,
@@ -157,13 +201,19 @@ class ViperInstanceService {
             [SELKIES_CONTROL_PORT_SPEC]: [{ HostIp: '127.0.0.1', HostPort: `${devControlPort}` }]
           } })
         },
-        Labels: { [CLOUDVIPER_INSTANCE_LABEL]: instanceUUID },
+        Labels: {
+          // Ownership first. isCloudViPERInstance refuses to tear down any
+          // container without this, so it must survive alongside the routing
+          // labels rather than be replaced by them.
+          [CLOUDVIPER_INSTANCE_LABEL]: instanceUUID,
+          ...traefikRoutingLabels(containerName, instanceURL)
+        },
         ExposedPorts: { '3000/tcp': {}, ...(isDev && { [SELKIES_CONTROL_PORT_SPEC]: {} }) },
         NetworkingConfig: {
           EndpointsConfig: {
             'cloud-viper-net': {},
-            ...(process.env.NODE_ENV === 'prod' && { 'ingress-proxy': {} }),
-            ...(process.env.NODE_ENV === 'production' && { 'ingress-proxy': {} })
+            ...(process.env.NODE_ENV === 'prod' && { [INGRESS_NETWORK]: {} }),
+            ...(process.env.NODE_ENV === 'production' && { [INGRESS_NETWORK]: {} })
           }
         },
         Env: envVars,
@@ -191,6 +241,9 @@ class ViperInstanceService {
         name: containerName,
         url: instanceURL,
         masterToken: masterToken,
+        imageId: image.imageId,
+        imageReference: image.reference,
+        isBuildInstance: buildMode,
         devPorts,
         statusKey: statusKey,
         owner: ownerId,
@@ -209,14 +262,19 @@ class ViperInstanceService {
         timestamp: new Date().toISOString()
       });
 
-      // In development mode, simulate ACME hook completion since SSL certs won't be issued
+      // An instance used to be promoted to 'active' by the proxy's ACME_POST_HOOK
+      // once a certificate had been issued for its subdomain. Traefik serves a
+      // wildcard, so no certificate is issued per instance and nothing calls
+      // back. The promotion has to happen here instead.
       if (process.env.NODE_ENV === 'dev') {
         this.simulateDevCertProcess(instanceUUID, newViperInstance);
+      } else {
+        this.activateOnceRouted(instanceUUID, newViperInstance, container.id);
       }
 
       // Setup monitoring and security (non-critical - don't fail instance creation if these fail)
       try {
-        await this.setupContainerSecurityAndMonitoring(container, instanceUUID, statusKey);
+        await this.setupContainerSecurityAndMonitoring(container, instanceUUID, statusKey, buildMode);
       } catch (monitoringError) {
         // Log monitoring setup failure but don't fail the instance creation
         appLogger.warn('Monitoring setup failed - instance created but monitoring may not work', {
@@ -266,6 +324,68 @@ class ViperInstanceService {
       
       throw error;
     }
+  }
+
+  /**
+   * Promote an instance to 'active' once Traefik has had time to see it.
+   *
+   * Traefik's Docker provider picks up a new container within its watch
+   * interval, and the wildcard certificate already exists, so there is nothing
+   * to wait for beyond that. The delay is a short grace period, not a
+   * certificate exchange.
+   *
+   * The container is re-checked before promotion rather than promoted blindly:
+   * one that died during start would otherwise be advertised as ready, and the
+   * launch page would frame a desktop that was never coming.
+   */
+  private activateOnceRouted(instanceUUID: string, instance: any, containerId: string): void {
+    setTimeout(async () => {
+      try {
+        const details = await containerService.inspectContainer(containerId);
+
+        if (!details?.State?.Running) {
+          await instance.update({
+            status: 'error',
+            logs: [...(instance.logs || []), {
+              timestamp: new Date(),
+              message: `Container stopped before it could be routed (${details?.State?.Status ?? 'unknown'})`
+            }]
+          });
+
+          appLogger.error('Instance container was not running when it should have been routed', {
+            eventType: 'Instance Activation Failed',
+            instanceUUID,
+            containerId,
+            state: details?.State?.Status ?? 'unknown',
+            timestamp: new Date().toISOString()
+          });
+          return;
+        }
+
+        await instance.update({
+          status: 'active',
+          logs: [...(instance.logs || []), {
+            timestamp: new Date(),
+            message: 'Instance active, routed by Traefik under the wildcard certificate'
+          }]
+        });
+
+        appLogger.info('Instance activated', {
+          eventType: 'Instance Activated',
+          instanceUUID,
+          containerId,
+          timestamp: new Date().toISOString()
+        });
+      } catch (error) {
+        appLogger.error('Could not activate instance', {
+          eventType: 'Instance Activation Failed',
+          instanceUUID,
+          containerId,
+          error: (error as Error).message,
+          timestamp: new Date().toISOString()
+        });
+      }
+    }, INSTANCE_ACTIVATION_DELAY_MS);
   }
 
   /**
@@ -336,15 +456,25 @@ class ViperInstanceService {
   /**
    * Setup security and monitoring for a container
    */
-  private async setupContainerSecurityAndMonitoring(container: any, instanceUUID: string, statusKey: string): Promise<void> {
+  private async setupContainerSecurityAndMonitoring(container: any, instanceUUID: string, statusKey: string, buildMode = false): Promise<void> {
     // Validate required scripts exist
     const scriptValidation = validateRequiredScripts();
     if (!scriptValidation.valid) {
       throw new Error(`Missing required scripts: ${scriptValidation.missing.join(', ')}`);
     }
 
-    // Remove sudo access (security hardening)
-    await this.removeSudoAccess(container, instanceUUID);
+    // A build instance exists so an admin can install and configure things
+    // inside it, which needs sudo. Every other instance is stripped of it.
+    if (buildMode) {
+      appLogger.warn('Build instance keeps sudo access', {
+        eventType: 'Build Instance Privileged',
+        instanceUUID,
+        containerId: container.id,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      await this.removeSudoAccess(container, instanceUUID);
+    }
     
     // Install monitoring dependencies
     await this.installMonitoringDependencies(container, instanceUUID);

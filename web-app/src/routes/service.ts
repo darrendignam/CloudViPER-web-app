@@ -36,9 +36,19 @@ interface ServiceUser {
     username: string;
     email: string;
     role: UserRole;
-    team?: string;
+    teamId?: number | null;
     invitedById?: number;
 }
+
+/**
+ * Everything a page needs about the signed-in user. The team association has to
+ * be loaded explicitly or userToJson reports no team, which reads as "you are
+ * in no team" rather than as a missing include.
+ */
+const VIEW_USER_INCLUDE = [
+    { model: db.User, as: 'invitedBy', attributes: ['id', 'username', 'email'] },
+    { model: db.Team, as: 'team', attributes: ['id', 'name'] }
+];
 
 function userToJson(_user: any) {
     return {
@@ -46,7 +56,8 @@ function userToJson(_user: any) {
         username: _user.username,
         email: _user.email,
         role: _user.role,
-        team: _user.team || 'none',
+        teamId: _user.teamId ?? null,
+        team: _user.team ? _user.team.name : null,
         invitedById: _user.invitedById,
         invitedBy: _user.invitedBy ? {
             id: _user.invitedBy.id,
@@ -243,13 +254,7 @@ router.get('/member', async (req: Request, res: Response) => {
     
     // Fetch full user data with inviter information
     try {
-        const fullUser = await db.User.findByPk(user!.id, {
-            include: [{
-                model: db.User,
-                as: 'invitedBy',
-                attributes: ['id', 'username', 'email']
-            }]
-        });
+        const fullUser = await db.User.findByPk(user!.id, { include: VIEW_USER_INCLUDE });
         
         res.render('service_member', { user: userToJson(fullUser || user!) });
     } catch (error) {
@@ -283,13 +288,7 @@ router.get('/team-admin', async (req: Request, res: Response) => {
     
     // Fetch full user data with inviter information
     try {
-        const fullUser = await db.User.findByPk(user!.id, {
-            include: [{
-                model: db.User,
-                as: 'invitedBy',
-                attributes: ['id', 'username', 'email']
-            }]
-        });
+        const fullUser = await db.User.findByPk(user!.id, { include: VIEW_USER_INCLUDE });
         
         res.render('service_team_admin', { user: userToJson(fullUser || user!) });
     } catch (error) {
@@ -318,13 +317,7 @@ router.get('/team-leader', async (req: Request, res: Response) => {
     
     // Fetch full user data with inviter information
     try {
-        const fullUser = await db.User.findByPk(user!.id, {
-            include: [{
-                model: db.User,
-                as: 'invitedBy',
-                attributes: ['id', 'username', 'email']
-            }]
-        });
+        const fullUser = await db.User.findByPk(user!.id, { include: VIEW_USER_INCLUDE });
         
         res.render('service_team_leader', { user: userToJson(fullUser || user!) });
     } catch (error) {
@@ -390,7 +383,13 @@ router.post('/new-instance', async (req: Request, res: Response): Promise<void> 
 
     try {
         // Use the ViperInstanceService to create the instance
-        const result = await viperInstanceService.createInstance(user!);
+        // An image choice and build mode are both refused inside the service
+        // for roles that may not use them, so they are passed straight through
+        // rather than being pre-filtered into a silent default here.
+        const requestedImageId = req.body?.imageId ? Number(req.body.imageId) : null;
+        const buildMode = req.body?.buildMode === true;
+
+        const result = await viperInstanceService.createInstance(user!, requestedImageId, { buildMode });
         res.json(result);
     } catch (err) {
         const error = err as Error;
@@ -478,8 +477,12 @@ router.get('/viperinstances', async (req: Request, res: Response): Promise<void>
             // });
         } else if (user.role === UserRole.TEAM_ADMIN || user.role === UserRole.TEAM_LEADER) {
             // Team admins and leaders see all instances for their team
+            if (!user.teamId) {
+                res.status(403).json({ error: 'You must be in a team to view team instances' });
+                return;
+            }
             const teamUsers = await db.User.findAll({
-                where: { team: user.team },
+                where: { teamId: user.teamId },
                 attributes: ['id']
             });
             const teamUserIds = teamUsers.map(u => u.id);
@@ -497,7 +500,7 @@ router.get('/viperinstances', async (req: Request, res: Response): Promise<void>
                 eventType: 'Team Instance List Access',
                 userId: user.id,
                 userRole: user.role,
-                team: user.team,
+                teamId: user.teamId,
                 instanceCount: instances.length,
                 timestamp: new Date().toISOString()
             });
@@ -719,14 +722,13 @@ async function resolveAccessibleInstance(user: ServiceUser | undefined, instance
         return { instance, role: 'controller' };
     }
 
-    // 'none' is the default team, not a team. Comparing it directly would let any
-    // teamless leader reach any teamless user's desktop, and this path mints a
-    // session token, so the mistake would hand over control rather than a view.
-    const belongsToTeam = (team?: string): boolean => !!team && team !== 'none';
-
-    if (user.role === UserRole.TEAM_ADMIN || user.role === UserRole.TEAM_LEADER) {
+    // A null teamId is not a team, and SQL will not match it against another
+    // null, so two teamless users can no longer reach each other's desktops.
+    // That used to need an explicit guard against the 'none' sentinel, and a
+    // path that forgot it handed over a controller token rather than a view.
+    if ((user.role === UserRole.TEAM_ADMIN || user.role === UserRole.TEAM_LEADER) && user.teamId) {
         const owner = await db.User.findByPk(instance.owner);
-        if (owner && belongsToTeam(user.team) && (owner as any).team === user.team) {
+        if (owner && owner.teamId === user.teamId) {
             return { instance, role: 'viewer' };
         }
     }

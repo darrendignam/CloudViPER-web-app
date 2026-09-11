@@ -9,6 +9,8 @@ jest.mock('../../../config/logger', () => ({
 }));
 
 jest.mock('../../../models', () => ({
+    ContainerImage: { findOne: jest.fn(), findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), update: jest.fn() },
+    Team: { findOne: jest.fn(), findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), findOrCreate: jest.fn() },
     ViperInstance: { findOne: jest.fn(), findAll: jest.fn(), create: jest.fn(), count: jest.fn(), update: jest.fn() },
     User: { findByPk: jest.fn(), findOne: jest.fn(), findAll: jest.fn(), count: jest.fn() },
     Log: { create: jest.fn() },
@@ -68,31 +70,35 @@ describe('Instance access control', () => {
 
     describe.each(INSTANCE_SCOPED_ENDPOINTS)('%s', (endpoint) => {
         it('should refuse an unrelated signed-in user', async () => {
-            mockDb.User.findByPk.mockResolvedValue({ id: 42, team: 'preservation' });
+            mockDb.User.findByPk.mockResolvedValue({ id: 42, teamId: 1 });
 
             const response = await request(buildApp({
-                id: 77, username: 'stranger', email: 's@x.org', role: UserRole.MEMBER, team: 'other'
+                id: 77, username: 'stranger', email: 's@x.org', role: UserRole.MEMBER, teamId: 2
             })).get(endpoint);
 
             expect(response.status).toBe(403);
         });
 
-        it('should not treat the default team "none" as a shared team', async () => {
-            mockDb.User.findByPk.mockResolvedValue({ id: 42, team: 'none' });
-            mockDb.User.findOne.mockResolvedValue({ id: 42, team: 'none' });
+        // Teams used to be a free-text column where 'none' meant no team, so
+        // two teamless users compared equal and a leader could reach any
+        // teamless user's desktop. A null teamId cannot match another null, so
+        // this asserts the shape that replaced the sentinel.
+        it('should not treat two users with no team as sharing one', async () => {
+            mockDb.User.findByPk.mockResolvedValue({ id: 42, teamId: null });
+            mockDb.User.findOne.mockResolvedValue({ id: 42, teamId: null });
 
             const response = await request(buildApp({
-                id: 88, username: 'leader', email: 'l@x.org', role: UserRole.TEAM_LEADER, team: 'none'
+                id: 88, username: 'leader', email: 'l@x.org', role: UserRole.TEAM_LEADER, teamId: null
             })).get(endpoint);
 
             expect(response.status).toBe(403);
         });
 
         it('should admit a team leader on the same real team', async () => {
-            mockDb.User.findByPk.mockResolvedValue({ id: 42, team: 'preservation' });
+            mockDb.User.findByPk.mockResolvedValue({ id: 42, teamId: 1 });
 
             const response = await request(buildApp({
-                id: 88, username: 'leader', email: 'l@x.org', role: UserRole.TEAM_LEADER, team: 'preservation'
+                id: 88, username: 'leader', email: 'l@x.org', role: UserRole.TEAM_LEADER, teamId: 1
             })).get(endpoint);
 
             expect(response.status).not.toBe(403);

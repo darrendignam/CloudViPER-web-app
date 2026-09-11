@@ -8,9 +8,7 @@
       <h1 class="login-title">ViPER Member Dashboard</h1>
       <p class="login-subtitle">Welcome to your member dashboard, {{{user.email}}}</p>
       {{#if user.team}}
-        {{#unless (eq user.team "none")}}
-          <p class="login-subtitle" style="margin-top: 0.5rem;">Team: <strong>{{{user.team}}}</strong></p>
-        {{/unless}}
+        <p class="login-subtitle" style="margin-top: 0.5rem;">Team: <strong>{{{user.team}}}</strong></p>
       {{/if}}
     </div>
 {{!-- 

@@ -41,6 +41,8 @@ jest.mock('../../../utility/scriptManager', () => ({
 }));
 
 jest.mock('../../../models', () => ({
+    ContainerImage: { findOne: jest.fn(), findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), update: jest.fn() },
+    Team: { findOne: jest.fn(), findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), findOrCreate: jest.fn() },
     ViperInstance: {
         create: jest.fn(),
         findAll: jest.fn(),

@@ -115,6 +115,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/', require('./routes/home').default);
 app.use('/account', require('./routes/account').default);
 app.use('/service', require('./routes/service').default);
+app.use('/images', require('./routes/images').default);
 
 //Prod SSL Stuff
 if (process.env.NODE_ENV === 'production') {

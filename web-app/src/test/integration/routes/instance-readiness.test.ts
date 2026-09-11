@@ -15,6 +15,8 @@ jest.mock('../../../config/logger', () => ({
 }));
 
 jest.mock('../../../models', () => ({
+    ContainerImage: { findOne: jest.fn(), findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), update: jest.fn() },
+    Team: { findOne: jest.fn(), findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), findOrCreate: jest.fn() },
     ViperInstance: { findOne: jest.fn(), findAll: jest.fn(), create: jest.fn(), count: jest.fn(), update: jest.fn() },
     User: { findByPk: jest.fn(), findOne: jest.fn(), findAll: jest.fn(), count: jest.fn() },
     Log: { create: jest.fn() },
@@ -35,7 +37,7 @@ const mockDb = db as unknown as {
     User: { findByPk: jest.Mock };
 };
 
-const OWNER = { id: 42, username: 'owner', email: 'owner@example.org', role: UserRole.MEMBER, team: 'preservation' };
+const OWNER = { id: 42, username: 'owner', email: 'owner@example.org', role: UserRole.MEMBER, teamId: 1 };
 const INSTANCE = {
     id: 3,
     uuid: 'inst123abc45',
@@ -64,7 +66,7 @@ describe('GET /service/launch/:instanceUUID/ready', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         mockDb.ViperInstance.findOne.mockResolvedValue(INSTANCE);
-        mockDb.User.findByPk.mockResolvedValue({ id: 42, team: 'preservation' });
+        mockDb.User.findByPk.mockResolvedValue({ id: 42, teamId: 1 });
         fetchSpy = jest.spyOn(global, 'fetch');
     });
 
@@ -141,10 +143,10 @@ describe('GET /service/launch/:instanceUUID/ready', () => {
     });
 
     it('should not probe anything for a caller who cannot reach the instance', async () => {
-        mockDb.User.findByPk.mockResolvedValue({ id: 99, team: 'other' });
+        mockDb.User.findByPk.mockResolvedValue({ id: 99, teamId: 2 });
 
         const response = await request(buildApp({
-            id: 99, username: 'stranger', email: 's@x.org', role: UserRole.MEMBER, team: 'other'
+            id: 99, username: 'stranger', email: 's@x.org', role: UserRole.MEMBER, teamId: 2
         })).get(READY_URL);
 
         expect(response.status).toBe(403);

@@ -13,6 +13,8 @@ jest.mock('dockerode', () => {
 });
 
 jest.mock('../../../models', () => ({
+    ContainerImage: { findOne: jest.fn(), findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), update: jest.fn() },
+    Team: { findOne: jest.fn(), findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), findOrCreate: jest.fn() },
     ViperInstance: {
         count: jest.fn()
     },

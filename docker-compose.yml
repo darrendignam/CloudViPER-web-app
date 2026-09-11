@@ -1,29 +1,36 @@
-version: '3'
+# CloudViPER application stack.
+#
+# Ingress is Traefik, running as a separate stack, which watches the
+# cloudviper_ingress network and reads routing from container labels. That
+# network must exist before this stack starts:
+#
+#   docker network create cloudviper_ingress
+#
+# DOMAIN_NAME is the host the app answers on, and desktops are created as
+# <uuid>.<APP_HOST>, so the certificate has to cover the wildcard. Traefik holds
+# one wildcard for the zone, which is why no instance performs its own ACME
+# exchange the way the old nginx-proxy arrangement did.
 services:
   app:
-    # image: darrenopf/viper-web-gui:latest
     build:
       context: .
       dockerfile: Dockerfile
     container_name: cloud-viper-gui-app
-    ##########################################
-    # use 'ports' for local dev. 'expose' with
-    # ingress-nginx for more security. 
+    # expose, not ports: Traefik reaches this over the ingress network, so the
+    # application is never published on the host directly.
     expose:
       - '3000'
-    ports:
-      - "3333:3000"
+    # Uncomment for local dev/debugging only:
+    # ports:
+    #   - "3333:3000"
     restart: always
     env_file: ./web-app/.env.production.local
     environment:
-      - VIRTUAL_PORT=3000
-      - VIRTUAL_HOST=${DOMAIN_NAME:-cloudviper.org}
-      - LETSENCRYPT_HOST=${DOMAIN_NAME:-cloudviper.org}
-      - LETSENCRYPT_EMAIL=sysadmin@openpreservation.org
-      - DOMAIN_NAME=${DOMAIN_NAME:-cloudviper.org}
-      - NODE_ENV=dev
+      - NODE_ENV=production
     volumes:
       - ./web-app/logs:/usr/src/app/logs
+      # The app creates and destroys instance containers, so it drives the host
+      # Docker daemon. Instance containers never receive this themselves.
       - /var/run/docker.sock:/var/run/docker.sock
       - ./scripts:/usr/src/app/scripts
     depends_on:
@@ -31,23 +38,37 @@ services:
         condition: service_healthy
     networks:
       - cloud-viper-net
-      # - ingress-proxy
-    ##########################################
-    # Production command  
+      - cloudviper_ingress
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.cloudviper-app.rule=Host(`${DOMAIN_NAME:-vipercloud.cc}`)"
+      - "traefik.http.routers.cloudviper-app.entrypoints=websecure"
+      - "traefik.http.routers.cloudviper-app.tls=true"
+      - "traefik.http.routers.cloudviper-app.tls.certresolver=letsencrypt"
+      - "traefik.http.services.cloudviper-app.loadbalancer.server.port=3000"
+      - "traefik.docker.network=cloudviper_ingress"
     command: [ "node", "dist/app.js" ]
-    # Development command - optimized for TypeScript + Handlebars
-    # command: ["sh", "-c", "npm ci && npx nodemon --watch src --ext ts,js,handlebars --exec 'npx ts-node --transpile-only src/app.ts'"]
-    
+
   mysqldb:
     image: mysql:8.0
     container_name: cloud-viper-mysqldb
     restart: always
     env_file: ./web-app/.env.production.local
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+        reservations:
+          memory: 200M
+    # Loopback only. The database is reachable through an SSH tunnel when it is
+    # needed and from nowhere else; publishing 3306 on a public address would
+    # bypass the firewall through Docker's own iptables rules.
     ports:
-      - 3306:3306
+      - "127.0.0.1:3306:3306"
     volumes:
-      - ./volumes/mysql_data:/var/lib/mysql
-    command: --default-authentication-plugin=mysql_native_password --expire_logs_days=7 --max_binlog_size=500M
+      - ./volumes/mysql_8_data:/var/lib/mysql
+      - ./mysql-config/my.cnf:/etc/mysql/conf.d/custom.cnf:ro
+    command: --default-authentication-plugin=mysql_native_password --skip-log-bin --performance-schema=OFF
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       timeout: 20s
@@ -55,27 +76,44 @@ services:
     networks:
       - cloud-viper-net
 
-  # optional: The google cloud or amazon firewall should be configured to NOT open any database related ports, these are open so that they can be forwarded via SSH should the be needed for database access
+  # Off by default. It is useful for support but it is another service holding
+  # memory that desktops want, and another authenticated surface on the public
+  # internet. Start it deliberately:
+  #
+  #   docker compose --profile tools up -d phpmyadmin
   phpmyadmin:
     image: phpmyadmin/phpmyadmin
     container_name: pma
+    profiles: ["tools"]
     environment:
       PMA_HOST: mysqldb
       PMA_PORT: 3306
       PMA_ARBITRARY: 1
     restart: always
-    ports:
-      - "8383:80"
+    expose:
+      - 80
     depends_on:
       - mysqldb
     networks:
       - cloud-viper-net
+      - cloudviper_ingress
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.pma-cloudviper.rule=Host(`pma.${DOMAIN_NAME:-vipercloud.cc}`)"
+      - "traefik.http.routers.pma-cloudviper.entrypoints=websecure"
+      - "traefik.http.routers.pma-cloudviper.tls=true"
+      - "traefik.http.routers.pma-cloudviper.tls.certresolver=letsencrypt"
+      - "traefik.http.services.pma-cloudviper.loadbalancer.server.port=80"
+      - "traefik.docker.network=cloudviper_ingress"
 
 networks:
+  # Instance containers join this too, so the app can reach their Selkies
+  # control plane by container name.
   cloud-viper-net:
     name: cloud-viper-net
     driver: bridge
-  # If using a proxy, uncomment the following lines
-  # ingress-proxy:
-  #   external: true
-  #   name: ingress-proxy
+  # Created outside this stack, because Traefik owns it and outlives any
+  # single application deploy.
+  cloudviper_ingress:
+    external: true
+    name: cloudviper_ingress

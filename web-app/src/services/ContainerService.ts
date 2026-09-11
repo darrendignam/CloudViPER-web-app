@@ -37,6 +37,13 @@ export interface IContainerService {
     exitCode: number;
   }>;
 
+  // Image operations
+  pullImage(reference: string): Promise<void>;
+  listImages(options?: any): Promise<any[]>;
+  inspectImage(reference: string): Promise<any>;
+  removeImage(reference: string, options?: any): Promise<void>;
+  commitContainer(containerId: string, options: any): Promise<any>;
+
   // Utility method to get container
   getContainer(containerId: string): any;
 
@@ -217,6 +224,86 @@ export class DockerContainerService implements IContainerService {
       });
       throw error;
     }
+  }
+
+  /**
+   * Pull an image, resolving only once the last layer has landed.
+   *
+   * dockerode hands back a stream that is still going when the call returns, so
+   * awaiting the call alone would report a multi-gigabyte ViPER image as ready
+   * the moment the download started. followProgress is what actually waits.
+   */
+  async pullImage(reference: string): Promise<void> {
+    const stream: any = await new Promise((resolve, reject) => {
+      this.docker.pull(reference, {}, (error: any, result: any) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(result);
+      });
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      (this.docker as any).modem.followProgress(
+        stream,
+        (error: any, output: any[]) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          // A pull can stream an error as its final event and still finish
+          // without raising, so the tail has to be inspected.
+          const failure = (output || []).find((event: any) => event?.error);
+          if (failure) {
+            reject(new Error(failure.error));
+            return;
+          }
+
+          resolve();
+        }
+      );
+    });
+
+    appLogger.info('Image pulled', {
+      eventType: 'Image Pulled',
+      reference,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  async listImages(options?: any): Promise<any[]> {
+    try {
+      // Cast for the same reason listContainers is cast above: the callback
+      // overload in dockerode's typings wins and reports void.
+      return (await (this.docker as any).listImages(options || {})) || [];
+    } catch (error) {
+      appLogger.error('Error listing Docker images', {
+        eventType: 'Image List Error',
+        error: (error as Error).message,
+        timestamp: new Date().toISOString()
+      });
+      throw error;
+    }
+  }
+
+  async inspectImage(reference: string): Promise<any> {
+    return this.docker.getImage(reference).inspect();
+  }
+
+  async removeImage(reference: string, options?: any): Promise<void> {
+    await this.docker.getImage(reference).remove(options || {});
+
+    appLogger.warn('Image removed', {
+      eventType: 'Image Removed',
+      reference,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  async commitContainer(containerId: string, options: any): Promise<any> {
+    return this.docker.getContainer(containerId).commit(options);
   }
 
   getContainer(containerId: string): any {

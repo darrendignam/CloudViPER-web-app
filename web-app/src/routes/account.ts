@@ -41,12 +41,42 @@ function userAsJSON(user: any): object {
         return {};
     }
 }
+/**
+ * Turn a team name from a request into a team id, or null for no team.
+ *
+ * The UI sends the literal 'none' for no team, and so did every row in the
+ * database before teams became rows. Resolving that as a name would create a
+ * team actually called "none" and quietly reintroduce the sentinel this design
+ * removed, so it is mapped to null here rather than trusted.
+ */
+const NO_TEAM_VALUES = ['', 'none'];
+
+async function resolveTeamIdFromName(teamName: unknown): Promise<number | null> {
+    const trimmed = typeof teamName === 'string' ? teamName.trim() : '';
+
+    if (NO_TEAM_VALUES.includes(trimmed.toLowerCase())) {
+        return null;
+    }
+
+    const team = await db.User.resolveTeam(trimmed);
+    return team.id;
+}
+
+/** The team association, loaded so a name can be shown rather than an id. */
+const TEAM_INCLUDE = { model: db.Team, as: 'team', attributes: ['id', 'name'] };
+
+/** Users reach the UI with `team` as a plain name, which is what it renders. */
+function userWithTeamName(user: any) {
+    const plain = typeof user.toJSON === 'function' ? user.toJSON() : { ...user };
+    return { ...plain, team: plain.team ? plain.team.name : null };
+}
+
 interface AccountUser {
     id: number;
     username: string;
     email: string;
     role: UserRole;
-    team?: string;
+    teamId?: number | null;
     invitedById?: number;
 }
 
@@ -163,28 +193,28 @@ router.get('/users', async (req: Request, res: Response) => {
                     model: db.User,
                     as: 'invitedBy',
                     attributes: ['id', 'username', 'email']
-                }]
+                }, TEAM_INCLUDE]
             });
         } else if (user.role === UserRole.TEAM_ADMIN || user.role === UserRole.TEAM_LEADER) {
             // Team admins and leaders see only their team members
-            if (!user.team || user.team === 'none') {
+            if (!user.teamId) {
                 res.status(403).send({ message: "You must be in a team" });
                 return;
             }
             users = await db.User.findAll({
-                where: { team: user.team },
+                where: { teamId: user.teamId },
                 include: [{
                     model: db.User,
                     as: 'invitedBy',
                     attributes: ['id', 'username', 'email']
-                }]
+                }, TEAM_INCLUDE]
             });
         } else {
             res.status(403).send({ message: "Insufficient permissions" });
             return;
         }
 
-        res.json(users);
+        res.json(users.map(userWithTeamName));
     } catch (error) {
         res.status(500).json({ error: (error as Error).message });
     }
@@ -200,18 +230,16 @@ router.get('/teams', async (req: Request, res: Response) => {
     }
 
     try {
-        const teams = await db.User.findAll({
-            attributes: [[db.sequelize.fn('DISTINCT', db.sequelize.col('team')), 'team']],
-            where: {
-                team: {
-                    [Op.ne]: 'none'
-                }
-            },
-            raw: true
+        // Teams are rows now, so this is a listing rather than a DISTINCT over
+        // a free-text column with the 'none' sentinel filtered back out.
+        const teams = await db.Team.findAll({
+            attributes: ['name'],
+            order: [['name', 'ASC']]
         });
 
-        const teamNames = teams.map((t: any) => t.team).filter((team: string) => team && team !== 'none');
-        res.json(teamNames);
+        // Names, not rows: a team is identified to a person by its name, and
+        // the UI uses these values directly as select options.
+        res.json(teams.map((team: any) => team.name));
     } catch (error) {
         res.status(500).json({ error: (error as Error).message });
     }
@@ -227,26 +255,30 @@ router.put('/users/:id/team', async (req: Request, res: Response): Promise<void>
     }
 
     const userId = req.params.id;
-    const newTeam = req.body.team || 'none';
+    // An absent or empty team means no team, which is null. Nothing is stored
+    // to represent it.
+    const newTeamName = typeof req.body.team === 'string' ? req.body.team.trim() : '';
 
     try {
         const user = await db.User.findByPk(userId);
-        
+
         if (!user) {
             res.status(404).send({ message: 'User not found' });
             return;
         }
 
-        const oldTeam = user.team;
-        user.team = newTeam;
+        const oldTeamId = user.teamId;
+        const newTeamId = await resolveTeamIdFromName(newTeamName);
+        user.teamId = newTeamId;
         await user.save();
 
         appLogger.info('User team updated', {
             eventType: 'User Team Update',
             userId: user.id,
             userEmail: user.email,
-            oldTeam,
-            newTeam,
+            oldTeamId,
+            newTeamId,
+            newTeamName: newTeamName || null,
             updatedBy: currentUser.id,
             updatedByUsername: currentUser.username,
             timestamp: new Date().toISOString()
@@ -304,7 +336,7 @@ router.put('/users/:id/role', async (req: Request, res: Response): Promise<void>
         // Team admin restrictions
         if (currentUser.role === UserRole.TEAM_ADMIN) {
             // Ensure target user is in their team
-            if (targetUser.team !== currentUser.team) {
+            if (!currentUser.teamId || targetUser.teamId !== currentUser.teamId) {
                 res.status(403).send({ message: 'Can only update roles within your team' });
                 return;
             }
@@ -365,7 +397,7 @@ router.post('/users/invite', async (req: Request, res: Response): Promise<void> 
     
     // Validate the role before processing
     const assignedRole = toUserRole(req.body.role);
-    const teamName = req.body.team || currentUser.team || 'none';
+    const requestedTeamName = typeof req.body.team === 'string' ? req.body.team.trim() : '';
     
     // Role-based permission checks
     if (currentUser.role === UserRole.TEAM_LEADER) {
@@ -374,7 +406,7 @@ router.post('/users/invite', async (req: Request, res: Response): Promise<void> 
             res.status(403).send({ message: 'Team leaders can only invite members' });
             return;
         }
-        if (!currentUser.team || currentUser.team === 'none') {
+        if (!currentUser.teamId) {
             res.status(403).send({ message: 'You must be in a team to invite users' });
             return;
         }
@@ -386,22 +418,31 @@ router.post('/users/invite', async (req: Request, res: Response): Promise<void> 
             res.status(403).send({ message: 'Team admins can only invite members and team leaders' });
             return;
         }
-        if (!currentUser.team || currentUser.team === 'none') {
+        if (!currentUser.teamId) {
             res.status(403).send({ message: 'You must be in a team to invite users' });
             return;
         }
     }
     
+    // Only a system admin may direct an invitation at a team other than their
+    // own. For anyone else the team is not a request, it is who they are.
+    const invitedTeamId = currentUser.role === UserRole.ADMIN
+        ? await resolveTeamIdFromName(requestedTeamName)
+        : currentUser.teamId ?? null;
+
+    const invitedTeam = invitedTeamId ? await db.Team.findByPk(invitedTeamId) : null;
+    const teamName = invitedTeam ? invitedTeam.name : null;
+
     try {
         const newUsername = helperFunctions.generateUsername(req.body.email);
-        
+
         const userData: any = {
             username: newUsername,
             role: assignedRole,
             email: req.body.email,
             oauthProvider: "vipercloud",
             invitedById: currentUser.id,
-            team: teamName
+            teamId: invitedTeamId
         };
         
         const user = await db.User.register(userData, helperFunctions.generateRandomString(25)/*password*/);

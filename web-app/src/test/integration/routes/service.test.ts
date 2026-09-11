@@ -35,6 +35,8 @@ jest.mock('../../../utility/portManager', () => ({
 }));
 
 jest.mock('../../../models', () => ({
+    ContainerImage: { findOne: jest.fn(), findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), update: jest.fn() },
+    Team: { findOne: jest.fn(), findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), findOrCreate: jest.fn() },
     ViperInstance: {
         create: jest.fn(),
         findAll: jest.fn(),
@@ -880,11 +882,33 @@ describe('Service Routes', () => {
             await request(testApp).post('/service/new-instance');
 
             expect(mockDockerInstance.createContainer).toHaveBeenCalled();
-            if (mockDockerInstance.createContainer.mock.calls.length > 0) {
-                const createContainerCall = mockDockerInstance.createContainer.mock.calls[0][0];
-                expect(createContainerCall.NetworkingConfig.EndpointsConfig).toHaveProperty('ingress-proxy');
-                expect(createContainerCall.HostConfig.PortBindings).toBeUndefined();
-            }
+            const createContainerCall = mockDockerInstance.createContainer.mock.calls[0][0];
+
+            // Traefik watches this network; an instance that is not on it is
+            // unreachable no matter how correct its labels are.
+            expect(createContainerCall.NetworkingConfig.EndpointsConfig).toHaveProperty('cloudviper_ingress');
+            expect(createContainerCall.HostConfig.PortBindings).toBeUndefined();
+
+            // Routing comes from labels, not from VIRTUAL_HOST env vars.
+            const labels = createContainerCall.Labels;
+            expect(labels['traefik.enable']).toBe('true');
+            expect(labels['traefik.docker.network']).toBe('cloudviper_ingress');
+            expect(Object.keys(labels).some(key => key.endsWith('.rule'))).toBe(true);
+
+            // The ownership label has to survive alongside the routing labels.
+            // isCloudViPERInstance refuses to tear down a container without it,
+            // so a Labels block that replaced rather than merged would disable
+            // the guard that stops a stray id reaching MySQL or the app itself.
+            expect(labels['org.openpreservation.cloudviper.instance']).toBeTruthy();
+
+            // The nginx-proxy contract is gone: nothing reads these now, and
+            // leaving them would imply a proxy that is not there.
+            const envNames = createContainerCall.Env.map((entry: string) => entry.split('=')[0]);
+            expect(envNames).not.toContain('VIRTUAL_HOST');
+            expect(envNames).not.toContain('LETSENCRYPT_HOST');
+            expect(envNames).not.toContain('ACME_PRE_HOOK');
+            expect(envNames).not.toContain('ACME_POST_HOOK');
+            expect(envNames).toContain('SELKIES_MASTER_TOKEN');
 
             process.env.NODE_ENV = originalEnv;
         });

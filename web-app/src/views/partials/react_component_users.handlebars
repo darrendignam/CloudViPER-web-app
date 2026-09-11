@@ -168,18 +168,27 @@ class UserList extends React.Component {
     return [];
   };
 
+  // Two users with no team are not colleagues. userTeam is null when the
+  // signed-in user has no team, and comparing null to null would otherwise
+  // offer edit controls over every teamless account in the system. The server
+  // refuses those edits regardless; showing the buttons is still wrong.
+  sharesTeamWith = (user) => {
+    const { userTeam } = this.props;
+    return !!userTeam && !!user.team && user.team === userTeam;
+  };
+
   canEditUser = (user) => {
-    const { userRole, userTeam, currentUserId } = this.props;
+    const { userRole, currentUserId } = this.props;
     if (userRole === 'admin') {
       return true;
     }
     if (userRole === 'team_admin') {
       // Team admin cannot edit their own role
-      return user.team === userTeam && user.id !== currentUserId;
+      return this.sharesTeamWith(user) && user.id !== currentUserId;
     }
     if (userRole === 'team_leader') {
       // Team leaders can only manage members, not other team leaders or team admins
-      return user.team === userTeam && user.role === 'member';
+      return this.sharesTeamWith(user) && user.role === 'member';
     }
     return false;
   };

@@ -11,6 +11,8 @@ jest.mock('../../../config/logger', () => ({
 }));
 
 jest.mock('../../../models', () => ({
+    ContainerImage: { findOne: jest.fn(), findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), update: jest.fn() },
+    Team: { findOne: jest.fn(), findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), findOrCreate: jest.fn() },
     ViperInstance: { findOne: jest.fn(), findAll: jest.fn(), create: jest.fn(), count: jest.fn(), update: jest.fn() },
     User: { findByPk: jest.fn(), findOne: jest.fn(), findAll: jest.fn(), count: jest.fn() },
     Log: { create: jest.fn() },
@@ -36,7 +38,7 @@ const mockService = viperInstanceService as unknown as {
     revokeInstanceAccess: jest.Mock;
 };
 
-const OWNER = { id: 42, username: 'owner', email: 'owner@example.org', role: UserRole.MEMBER, team: 'preservation' };
+const OWNER = { id: 42, username: 'owner', email: 'owner@example.org', role: UserRole.MEMBER, teamId: 1 };
 const INSTANCE = { id: 3, uuid: 'inst123abc45', name: 'viper-cloud-inst123abc45', url: 'inst123abc45.example.org', owner: 42 };
 
 function buildApp(user?: any) {
@@ -102,7 +104,7 @@ describe('Service launch and proxy auth routes', () => {
         });
 
         it('should reject a signed-in stranger with 403 and mint nothing', async () => {
-            const stranger = { ...OWNER, id: 77, team: 'other' };
+            const stranger = { ...OWNER, id: 77, teamId: 2 };
 
             const response = await request(buildApp(stranger)).get('/service/launch/inst123abc45').expect(403);
 
@@ -111,15 +113,15 @@ describe('Service launch and proxy auth routes', () => {
         });
 
         it('should allow a team leader on the same real team', async () => {
-            mockDb.User.findByPk.mockResolvedValue({ id: 42, team: 'preservation' });
-            const leader = { ...OWNER, id: 88, role: UserRole.TEAM_LEADER, team: 'preservation' };
+            mockDb.User.findByPk.mockResolvedValue({ id: 42, teamId: 1 });
+            const leader = { ...OWNER, id: 88, role: UserRole.TEAM_LEADER, teamId: 1 };
 
             await request(buildApp(leader)).get('/service/launch/inst123abc45').expect(200);
         });
 
-        it('should not treat the default team "none" as a shared team', async () => {
-            mockDb.User.findByPk.mockResolvedValue({ id: 42, team: 'none' });
-            const teamlessLeader = { ...OWNER, id: 88, role: UserRole.TEAM_LEADER, team: 'none' };
+        it('should not treat two users with no team as sharing one', async () => {
+            mockDb.User.findByPk.mockResolvedValue({ id: 42, teamId: null });
+            const teamlessLeader = { ...OWNER, id: 88, role: UserRole.TEAM_LEADER, teamId: null };
 
             await request(buildApp(teamlessLeader)).get('/service/launch/inst123abc45').expect(403);
 
@@ -156,8 +158,8 @@ describe('Service launch and proxy auth routes', () => {
         });
 
         it('should mint a viewer token for a team leader, not a controller one', async () => {
-            mockDb.User.findByPk.mockResolvedValue({ id: 42, team: 'preservation' });
-            const leader = { ...OWNER, id: 88, role: UserRole.TEAM_LEADER, team: 'preservation' };
+            mockDb.User.findByPk.mockResolvedValue({ id: 42, teamId: 1 });
+            const leader = { ...OWNER, id: 88, role: UserRole.TEAM_LEADER, teamId: 1 };
 
             const response = await request(buildApp(leader))
                 .post('/service/launch/inst123abc45/token')
@@ -188,7 +190,7 @@ describe('Service launch and proxy auth routes', () => {
         });
 
         it('should reject a stranger and mint nothing', async () => {
-            const stranger = { ...OWNER, id: 77, team: 'other' };
+            const stranger = { ...OWNER, id: 77, teamId: 2 };
 
             await request(buildApp(stranger)).post('/service/launch/inst123abc45/token').expect(403);
 
@@ -226,7 +228,7 @@ describe('Service launch and proxy auth routes', () => {
         });
 
         it('should return 403 for a signed-in stranger', async () => {
-            await request(buildApp({ ...OWNER, id: 77, team: 'other' }))
+            await request(buildApp({ ...OWNER, id: 77, teamId: 2 }))
                 .get('/service/auth/instance/inst123abc45')
                 .expect(403);
         });

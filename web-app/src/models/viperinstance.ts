@@ -19,6 +19,15 @@ interface ViperInstanceAttributes {
     sessionTokens?: Record<string, any>;
     devPorts?: Record<string, number> | null;
     statusKey: string;
+    // Which image this instance was built from. imageId can go null if the pool
+    // entry is deleted, so the reference is kept alongside it: support needs to
+    // know what an instance actually ran, not what it points at today.
+    imageId?: number | null;
+    imageReference?: string | null;
+    // A build instance keeps sudo so an admin can customise it before it is
+    // committed to an image. Normal instances are hardened; this records which
+    // is which rather than leaving it to be inferred.
+    isBuildInstance?: boolean;
     createdAt?: Date;
     updatedAt?: Date;
     status: string;
@@ -42,6 +51,9 @@ export default (sequelize: Sequelize) => {
         public sessionTokens?: Record<string, any>;
         public devPorts?: Record<string, number> | null;
         public statusKey!: string;
+        public imageId?: number | null;
+        public imageReference?: string | null;
+        public isBuildInstance?: boolean;
         public createdAt?: Date;
         public updatedAt?: Date;
         public status!: string;
@@ -69,6 +81,11 @@ export default (sequelize: Sequelize) => {
             foreignKey: 'instanceId',
             as: 'activities'
           });
+
+          ViperInstance.belongsTo(models.ContainerImage, {
+            foreignKey: 'imageId',
+            as: 'image'
+          });
         }
     }
 
@@ -90,6 +107,9 @@ export default (sequelize: Sequelize) => {
         // production, where service names resolve and nothing is published.
         devPorts: { type: DataTypes.JSON, allowNull: true, defaultValue: null },
         statusKey: { type: DataTypes.STRING, allowNull: true },
+        imageId: { type: DataTypes.INTEGER, allowNull: true },
+        imageReference: { type: DataTypes.STRING, allowNull: true },
+        isBuildInstance: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
         createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
         status: { type: DataTypes.STRING, allowNull: false, defaultValue: 'initilising' },
         logs: { type: DataTypes.JSON, allowNull: true, defaultValue: [] }, // Initialize as an empty array

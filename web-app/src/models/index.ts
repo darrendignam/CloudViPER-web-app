@@ -10,6 +10,8 @@ import ViperInstance from './viperinstance';
 import Log from './log'; // Import the Logs model
 import Screenshot from './screenshot'; // Import the Screenshot model
 import Activity from './activity'; // Import the Activity model
+import Team from './team';
+import ContainerImage from './containerimage';
 
 
 const env = process.env.NODE_ENV || 'development';
@@ -63,6 +65,8 @@ const sequelize: Sequelize = new Sequelize(database, username, password, config)
 const usermodel = User(sequelize);
 const vipermodel = ViperInstance(sequelize);
 const logmodel = Log(sequelize); // Initialize the Logs model
+const teammodel = Team(sequelize);
+const containerimagemodel = ContainerImage(sequelize);
 const screenshotmodel = Screenshot(sequelize); // Initialize the Screenshot model
 const activitymodel = Activity(sequelize); // Initialize the Activity model
 
@@ -74,6 +78,8 @@ interface DB {
   Log: typeof logmodel; // Add Logs to the DB interface
   Screenshot: typeof screenshotmodel; // Add Screenshot to the DB interface
   Activity: typeof activitymodel; // Add Activity to the DB interface
+  Team: typeof teammodel;
+  ContainerImage: typeof containerimagemodel;
 }
 
 const db: DB = {
@@ -84,6 +90,8 @@ const db: DB = {
   Log: logmodel, // Add Logs to the db object
   Screenshot: screenshotmodel, // Add Screenshot to the db object
   Activity: activitymodel, // Add Activity to the db object
+  Team: teammodel,
+  ContainerImage: containerimagemodel,
 };
 
 Object.keys(db).forEach((modelName: string) => {

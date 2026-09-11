@@ -26,6 +26,8 @@ jest.mock('../../../services/ContainerService', () => ({
 }));
 
 jest.mock('../../../models', () => ({
+    ContainerImage: { findOne: jest.fn(), findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), update: jest.fn() },
+    Team: { findOne: jest.fn(), findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), findOrCreate: jest.fn() },
     ViperInstance: { findOne: jest.fn(), findAll: jest.fn(), create: jest.fn(), update: jest.fn() },
     User: { findByPk: jest.fn() },
     sequelize: { query: jest.fn() }

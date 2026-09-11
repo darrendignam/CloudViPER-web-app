@@ -16,6 +16,8 @@ const mockPath = path as jest.Mocked<typeof path>;
 
 // Mock the database models
 jest.mock('../../../models', () => ({
+    ContainerImage: { findOne: jest.fn(), findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), update: jest.fn() },
+    Team: { findOne: jest.fn(), findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), findOrCreate: jest.fn() },
     default: {},
     sequelize: {
         sync: jest.fn()
