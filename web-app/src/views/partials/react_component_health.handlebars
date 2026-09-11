@@ -37,7 +37,11 @@ class SystemHealth extends React.Component {
             <div className="stat-meter-track">
                 <div
                     className={'stat-meter-fill' + this.meterState(percent)}
-                    style={{ width: Math.min(100, Math.max(0, percent || 0)) + '%' }}
+                    {{!-- The brace is escaped because handlebars owns {{ and JSX's
+                         inline style object opens with the same two characters;
+                         unescaped it is parsed as an expression and the page
+                         500s at render. --}}
+                    style=\{{ width: Math.min(100, Math.max(0, percent || 0)) + '%' }}
                 />
             </div>
             {detail && <div className="stat-meter-detail">{detail}</div>}
