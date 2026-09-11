@@ -84,3 +84,49 @@
       }
     };
   })();
+
+  // Pagination, shared rather than reimplemented per table.
+  //
+  // Rows accumulate faster than anyone expects: sessions in particular grow by
+  // one per sign-in and are never pruned, so a list that was fine in testing
+  // becomes hundreds of rows and an unusable page. usePage keeps the slicing
+  // and the controls in one place so a table only has to say how big a page is.
+  function paginate(rows, page, perPage) {
+    var total = rows.length;
+    var pages = Math.max(1, Math.ceil(total / perPage));
+    var current = Math.min(Math.max(1, page), pages);
+    var start = (current - 1) * perPage;
+
+    return {
+      rows: rows.slice(start, start + perPage),
+      page: current,
+      pages: pages,
+      total: total,
+      from: total === 0 ? 0 : start + 1,
+      to: Math.min(start + perPage, total)
+    };
+  }
+
+  function Pager(props) {
+    var view = props.view;
+    if (view.total === 0) return null;
+
+    return (
+      <div className="pager">
+        <span className="pager-summary">
+          Showing {view.from} to {view.to} of {view.total}
+        </span>
+        {view.pages > 1 && (
+          <span className="pager-controls">
+            <button type="button" className="btn btn-sm btn-outline-secondary"
+              onClick={function () { props.onChange(view.page - 1); }}
+              disabled={view.page <= 1}>Previous</button>
+            <span className="pager-position">Page {view.page} of {view.pages}</span>
+            <button type="button" className="btn btn-sm btn-outline-secondary"
+              onClick={function () { props.onChange(view.page + 1); }}
+              disabled={view.page >= view.pages}>Next</button>
+          </span>
+        )}
+      </div>
+    );
+  }

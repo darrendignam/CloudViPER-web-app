@@ -20,7 +20,15 @@
         reference: '',
         name: '',
         description: '',
-        busy: false
+        busy: false,
+        // Everything on the box, in a panel that stays shut until asked for.
+        // It is a maintenance view, not part of the daily job of picking an
+        // image, and it lists things that cannot be acted on at all.
+        hostOpen: false,
+        hostImages: [],
+        hostLoading: false,
+        hostError: null,
+        hostPage: 1
       };
     }
 
@@ -38,6 +46,49 @@
     componentWillUnmount() {
       clearInterval(this.poll);
     }
+
+    toggleHostPanel = () => {
+      const opening = !this.state.hostOpen;
+      this.setState({ hostOpen: opening });
+      if (opening) this.fetchHostImages();
+    };
+
+    fetchHostImages = () => {
+      this.setState({ hostLoading: true, hostError: null });
+      fetchJson('/images/api/host')
+        .then(hostImages => this.setState({ hostImages, hostLoading: false }))
+        .catch(error => this.setState({ hostError: error.message, hostLoading: false }));
+    };
+
+    addHostImageToPool = (entry) => {
+      fetchJson('/images/api/pool', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reference: entry.reference, name: entry.reference })
+      })
+        .then(() => { this.fetchImages(); this.fetchHostImages(); })
+        .catch(error => this.setState({ hostError: error.message }));
+    };
+
+    deleteHostImage = (entry) => {
+      // Deliberately heavy. A ViPER image is around ten gigabytes and pulling
+      // it again is minutes, so the size is named rather than left implicit.
+      var size = this.formatSize(entry.sizeBytes);
+      if (!window.confirm(
+        'Delete ' + entry.reference + ' from this server?\n\n' +
+        'This frees ' + size + ' and cannot be undone here. If it came from a ' +
+        'registry it can be pulled again, which takes minutes for an image this ' +
+        'size. If it was built here it is gone for good.'
+      )) return;
+
+      fetchJson('/images/api/host', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reference: entry.reference })
+      })
+        .then(() => this.fetchHostImages())
+        .catch(error => this.setState({ hostError: error.message }));
+    };
 
     fetchImages = () => {
       fetch('/images/api/pool', { credentials: 'same-origin' })
@@ -116,7 +167,9 @@
     };
 
     render() {
-      const { images, loading, error, reference, name, description, busy } = this.state;
+      const { images, loading, error, reference, name, description, busy,
+              hostOpen, hostImages, hostLoading, hostError, hostPage } = this.state;
+      const hostView = paginate(hostImages, hostPage, 15);
 
       if (loading) return <p>Loading images...</p>;
 
@@ -197,6 +250,65 @@
               </div>
             </div>
           ))}
+
+          {this.isAdmin() && (
+            <div className="host-images">
+              <button type="button" className="host-images-toggle" onClick={this.toggleHostPanel}>
+                <i className={'fas fa-chevron-' + (hostOpen ? 'down' : 'right')}></i>{' '}
+                Images on this server
+                {hostImages.length > 0 && <span className="host-images-count">{hostImages.length}</span>}
+              </button>
+
+              {hostOpen && (
+                <div className="host-images-body">
+                  <p className="text-muted host-images-intro">
+                    Everything Docker holds on this box, including images that cannot be
+                    touched. They still occupy disk, so they are shown rather than hidden.
+                  </p>
+
+                  {hostError && <div className="image-warning">{hostError}</div>}
+                  {hostLoading && <p>Reading images from the server...</p>}
+
+                  {!hostLoading && (
+                    <div>
+                      <table className="table table-sm host-images-table">
+                        <thead>
+                          <tr><th>Reference</th><th>Size</th><th>State</th><th>Actions</th></tr>
+                        </thead>
+                        <tbody>
+                          {hostView.rows.map(entry => (
+                            <tr key={entry.reference}>
+                              <td className="image-ref">{entry.reference}</td>
+                              <td>{this.formatSize(entry.sizeBytes)}</td>
+                              <td>
+                                {entry.blocked && <span className="host-tag is-blocked">platform</span>}
+                                {entry.inPool && <span className="host-tag is-pooled">in pool</span>}
+                                {entry.inUse && <span className="host-tag is-inuse">in use</span>}
+                                {!entry.blocked && !entry.inPool && !entry.inUse && <span className="text-muted">unused</span>}
+                              </td>
+                              <td>
+                                {!entry.inPool && !entry.blocked && (
+                                  <button className="btn btn-sm btn-outline-primary mr-2"
+                                    onClick={() => this.addHostImageToPool(entry)}>Add to pool</button>
+                                )}
+                                {!entry.inPool && !entry.blocked && !entry.inUse && (
+                                  <button className="btn btn-sm btn-outline-danger"
+                                    onClick={() => this.deleteHostImage(entry)}>Delete</button>
+                                )}
+                                {entry.blocked && <span className="text-muted">the platform needs this</span>}
+                                {entry.inPool && <span className="text-muted">manage it above</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <Pager view={hostView} onChange={(next) => this.setState({ hostPage: next })} />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       );
     }

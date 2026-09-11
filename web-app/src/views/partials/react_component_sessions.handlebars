@@ -6,7 +6,11 @@ class SessionList extends React.Component {
           isLoading: true,
           error: null,
           isRevoking: false,
-          deletingSession: null
+          deletingSession: null,
+          // Sessions grow by one per sign-in and are never pruned, so this list
+          // reaches hundreds of rows on a box that has been used for a day.
+          page: 1,
+          perPage: 20
         };
       }
 
@@ -77,7 +81,8 @@ class SessionList extends React.Component {
       }
 
       render() {
-        const { sessions, isLoading, error, isRevoking, deletingSession } = this.state;
+        const { sessions, isLoading, error, isRevoking, deletingSession, page, perPage } = this.state;
+        const view = paginate(sessions, page, perPage);
 
         if (isLoading) {
           return <p>Loading sessions...</p>;
@@ -105,6 +110,7 @@ class SessionList extends React.Component {
                 <i className="fas fa-info-circle"></i> No active sessions found.
               </div>
             ) : (
+              <div>
               <table className="table table-striped">
                 <thead>
                   <tr>
@@ -116,7 +122,7 @@ class SessionList extends React.Component {
                   </tr>
                 </thead>
                 <tbody>
-                  {sessions.map(session => (
+                  {view.rows.map(session => (
                     <tr key={session.id}>
                       <td>
                         <code className="text-muted">{session.id}</code>
@@ -154,6 +160,8 @@ class SessionList extends React.Component {
                   ))}
                 </tbody>
               </table>
+              <Pager view={view} onChange={(next) => this.setState({ page: next })} />
+              </div>
             )}
           </div>
         );

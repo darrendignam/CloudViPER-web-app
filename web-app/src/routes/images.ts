@@ -110,11 +110,16 @@ router.get('/api/launchable', async (req: Request, res: Response): Promise<void>
     }
 });
 
+/**
+ * Everything on the host, annotated. Blocked and in-use images are included
+ * rather than hidden, because this is also where an administrator goes to see
+ * what is occupying disk, and an image that cannot be deleted still occupies it.
+ */
 router.get('/api/host', async (req: Request, res: Response): Promise<void> => {
     if (!requireAdmin(req, res)) return;
 
     try {
-        res.json(await containerImageService.hostImagesAvailableToAdd());
+        res.json(await containerImageService.hostImages());
     } catch (error) {
         appLogger.error('Could not list host images', {
             eventType: 'Host Image List Error',
@@ -297,6 +302,41 @@ router.get('/api/build-instances', async (req: Request, res: Response): Promise<
         res.json(instances);
     } catch (error) {
         res.status(500).json({ error: 'Could not list build instances' });
+    }
+});
+
+/**
+ * Delete an image from the host that is not in the pool.
+ *
+ * Pool entries go through the pool route instead, which checks defaults and
+ * team dependencies first. The service refuses anything blocked, pooled or
+ * backing a container, so the failure arrives as a sentence rather than a
+ * daemon error.
+ */
+router.delete('/api/host', async (req: Request, res: Response): Promise<void> => {
+    const user = requireAdmin(req, res);
+    if (!user) return;
+
+    const reference = String(req.body?.reference || '').trim();
+
+    if (!reference) {
+        res.status(400).json({ error: 'A reference is required' });
+        return;
+    }
+
+    try {
+        await containerImageService.removeHostImage(reference);
+
+        appLogger.warn('Host image deleted by an administrator', {
+            eventType: 'Host Image Delete',
+            reference,
+            userId: user.id,
+            timestamp: new Date().toISOString()
+        });
+
+        res.json({ success: true });
+    } catch (error) {
+        res.status(400).json({ error: (error as Error).message });
     }
 });
 

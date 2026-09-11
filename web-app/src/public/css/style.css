@@ -1724,3 +1724,55 @@ input.form-control:focus {
 }
 .instance-load-table { margin-bottom: 0; }
 .instance-load-name { font-family: monospace; font-size: 0.82rem; }
+
+/* Shared table pagination (2.1) */
+.pager {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.6rem 0.25rem;
+  font-size: 0.85rem;
+  color: #555555;
+}
+.pager-controls { display: flex; align-items: center; gap: 0.6rem; }
+.pager-position { font-variant-numeric: tabular-nums; }
+
+/* Images on this server (2.1). A maintenance panel, shut by default. */
+.host-images { margin-top: 1.5rem; border-top: 1px solid #dee2e6; padding-top: 1rem; }
+.host-images-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--opf-blue, #137DA4);
+  cursor: pointer;
+}
+.host-images-count {
+  margin-left: 0.5rem;
+  background: #e9ecef;
+  color: #555555;
+  border-radius: var(--radius-chrome, 0);
+  padding: 0.05rem 0.45rem;
+  font-size: 0.78rem;
+}
+.host-images-body { margin-top: 0.9rem; }
+.host-images-intro { font-size: 0.85rem; }
+.host-images-table { font-size: 0.85rem; }
+.host-images-table .image-ref { word-break: break-all; }
+/* State is never colour alone: each tag carries its own word (WCAG 1.4.1). */
+.host-tag {
+  display: inline-block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-chrome, 0);
+  padding: 0.02rem 0.4rem;
+  margin-right: 0.3rem;
+}
+.host-tag.is-blocked { color: #b3202c; }
+.host-tag.is-pooled  { color: var(--opf-blue, #137DA4); }
+.host-tag.is-inuse   { color: #b35c00; }

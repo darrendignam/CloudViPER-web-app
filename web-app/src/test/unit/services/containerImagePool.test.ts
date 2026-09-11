@@ -7,6 +7,7 @@ jest.mock('../../../config/logger', () => ({
 const mockContainerService = {
     pullImage: jest.fn(),
     listImages: jest.fn(),
+    listContainers: jest.fn(),
     inspectImage: jest.fn(),
     removeImage: jest.fn(),
     commitContainer: jest.fn(),
@@ -224,7 +225,10 @@ describe('removeImage', () => {
 });
 
 describe('hostImagesAvailableToAdd', () => {
-    beforeEach(() => jest.clearAllMocks());
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockContainerService.listContainers.mockResolvedValue([]);
+    });
 
     it('should exclude pooled, blocked and untagged images', async () => {
         mockContainerService.listImages.mockResolvedValue([
@@ -239,6 +243,67 @@ describe('hostImagesAvailableToAdd', () => {
         const available = await containerImageService.hostImagesAvailableToAdd();
 
         expect(available.map((entry: any) => entry.reference)).toEqual(['ghcr.io/x/viper:1']);
+    });
+});
+
+describe('hostImages and removeHostImage', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockContainerService.listImages.mockResolvedValue([
+            { RepoTags: ['ghcr.io/x/viper:1'], Size: 10_000_000_000 },
+            { RepoTags: ['ghcr.io/x/pooled:1'], Size: 500_000_000 },
+            { RepoTags: ['mysql:8'], Size: 1_000_000_000 },
+            { RepoTags: ['ghcr.io/x/busy:1'], Size: 200_000_000 }
+        ]);
+        mockDb.ContainerImage.findAll.mockResolvedValue([{ reference: 'ghcr.io/x/pooled:1' }]);
+        mockContainerService.listContainers.mockResolvedValue([{ Image: 'ghcr.io/x/busy:1' }]);
+        mockContainerService.removeImage.mockResolvedValue(undefined);
+    });
+
+    it('should show blocked and in-use images rather than hiding them', async () => {
+        // This panel is also where disk usage is inspected, and an image that
+        // cannot be deleted still occupies the disk.
+        const images = await containerImageService.hostImages();
+
+        expect(images.map((i: any) => i.reference)).toContain('mysql:8');
+        expect(images.find((i: any) => i.reference === 'mysql:8').blocked).toBe(true);
+        expect(images.find((i: any) => i.reference === 'ghcr.io/x/pooled:1').inPool).toBe(true);
+        expect(images.find((i: any) => i.reference === 'ghcr.io/x/busy:1').inUse).toBe(true);
+    });
+
+    it('should list the largest first, since that is what disk pressure is about', async () => {
+        const images = await containerImageService.hostImages();
+
+        expect(images[0].reference).toBe('ghcr.io/x/viper:1');
+    });
+
+    it('should refuse to delete a platform image', async () => {
+        await expect(containerImageService.removeHostImage('mysql:8'))
+            .rejects.toThrow('underpins the platform');
+        expect(mockContainerService.removeImage).not.toHaveBeenCalled();
+    });
+
+    it('should refuse to delete a pooled image and point at the pool', async () => {
+        // The pool route checks defaults and team dependencies; bypassing it
+        // here would delete an image teams still resolve to.
+        await expect(containerImageService.removeHostImage('ghcr.io/x/pooled:1'))
+            .rejects.toThrow('Remove the pool entry instead');
+    });
+
+    it('should refuse to delete an image a container still uses', async () => {
+        await expect(containerImageService.removeHostImage('ghcr.io/x/busy:1'))
+            .rejects.toThrow('container is still using');
+    });
+
+    it('should refuse something that is not on the host at all', async () => {
+        await expect(containerImageService.removeHostImage('ghcr.io/x/absent:1'))
+            .rejects.toThrow('not on this host');
+    });
+
+    it('should delete an unused, unpooled image', async () => {
+        await containerImageService.removeHostImage('ghcr.io/x/viper:1');
+
+        expect(mockContainerService.removeImage).toHaveBeenCalledWith('ghcr.io/x/viper:1');
     });
 });
 

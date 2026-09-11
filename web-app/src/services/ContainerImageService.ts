@@ -375,22 +375,80 @@ export class ContainerImageService {
      * from which someone chooses what to delete as well as what to add.
      */
     async hostImagesAvailableToAdd(): Promise<any[]> {
-        const [onHost, pooled] = await Promise.all([
+        return (await this.hostImages()).filter((entry: any) => !entry.inPool && !entry.blocked);
+    }
+
+    /**
+     * Everything on the host, annotated with why it can or cannot be acted on.
+     *
+     * Shows blocked and in-use images rather than hiding them, because an
+     * administrator looking at disk usage needs to see what is occupying it. The
+     * flags say what may be done; filtering them out would only make the same
+     * images look like they had vanished.
+     */
+    async hostImages(): Promise<any[]> {
+        const [onHost, pooled, running] = await Promise.all([
             containerService.listImages(),
-            db.ContainerImage.findAll({ attributes: ['reference'] })
+            db.ContainerImage.findAll({ attributes: ['reference'] }),
+            containerService.listContainers({ all: true }).catch(() => [])
         ]);
 
         const alreadyPooled = new Set(pooled.map((entry: any) => entry.reference));
+        // An image backing any container, running or stopped, cannot be removed
+        // by Docker, so saying so up front beats a daemon error after the click.
+        const inUse = new Set((running || []).map((container: any) => container.Image));
 
         return onHost
             .flatMap((entry: any) => (entry.RepoTags || []).map((tag: string) => ({
                 reference: tag,
                 sizeBytes: entry.Size,
-                createdAt: entry.Created ? new Date(entry.Created * 1000) : null
+                createdAt: entry.Created ? new Date(entry.Created * 1000) : null,
+                inPool: alreadyPooled.has(tag),
+                blocked: isBlockedImage(tag),
+                inUse: inUse.has(tag)
             })))
             .filter((entry: any) => entry.reference !== '<none>:<none>')
-            .filter((entry: any) => !alreadyPooled.has(entry.reference))
-            .filter((entry: any) => !isBlockedImage(entry.reference));
+            .sort((a: any, b: any) => (b.sizeBytes ?? 0) - (a.sizeBytes ?? 0));
+    }
+
+    /**
+     * Delete an image from the host that is not in the pool.
+     *
+     * Pool entries go through removeImage instead, which has its own guards
+     * about defaults and teams. This is for the rest: base images, old
+     * releases, anything occupying disk.
+     *
+     * Refusing rather than forcing is deliberate. A ViPER image is around ten
+     * gigabytes and pulling it again is minutes, so a deletion that is merely
+     * inconvenient at the wrong moment is worth making hard to do by accident.
+     */
+    async removeHostImage(reference: string): Promise<void> {
+        const target = (await this.hostImages()).find((entry: any) => entry.reference === reference);
+
+        if (!target) {
+            throw new Error('That image is not on this host');
+        }
+
+        if (target.blocked) {
+            throw new Error('That image underpins the platform and cannot be removed here');
+        }
+
+        if (target.inPool) {
+            throw new Error('That image is in the pool. Remove the pool entry instead, which checks whether anything still depends on it');
+        }
+
+        if (target.inUse) {
+            throw new Error('A container is still using that image. Remove the container first');
+        }
+
+        await containerService.removeImage(reference);
+
+        appLogger.warn('Host image deleted', {
+            eventType: 'Host Image Deleted',
+            reference,
+            sizeBytes: target.sizeBytes,
+            timestamp: new Date().toISOString()
+        });
     }
 
     /**
