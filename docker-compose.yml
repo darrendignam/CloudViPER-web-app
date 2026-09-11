@@ -23,7 +23,11 @@ services:
     # produces.
     #
     # For local development: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
-    image: ${APP_IMAGE:-ghcr.io/darrendignam/cloudviper-web-app:latest}
+    # Pinned, not :latest. Prereleases deliberately do not move :latest, so it
+    # does not exist for this line and a default pointing at it would fail with
+    # a manifest error rather than anything explaining why. An appliance sets
+    # APP_IMAGE in its .env to the release it should be running.
+    image: ${APP_IMAGE:-ghcr.io/darrendignam/cloudviper-web-app:2.1.0-alpha.0}
     container_name: cloud-viper-gui-app
     # expose, not ports: Traefik reaches this over the ingress network, so the
     # application is never published on the host directly.
