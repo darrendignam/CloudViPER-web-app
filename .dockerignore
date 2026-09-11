@@ -8,6 +8,16 @@
 **/node_modules
 web-app/dist
 
+# Runtime state, not source. The MySQL data directory is owned by the database
+# container's user and is unreadable by the daemon building the image, so
+# leaving it in the context fails the build outright with a permission error on
+# files like #innodb_redo, rather than merely wasting time tarring gigabytes.
+volumes/
+web-app/logs/
+
+# 190MB of test corpora shipped to instances at runtime, never built in.
+web-app/src/public/files/
+
 # Not part of the application
 .git
 .github
