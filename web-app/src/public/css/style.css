@@ -1548,3 +1548,54 @@ input.form-control:focus {
     background: #fff;
   }
   .image-form { border: 1px solid #dee2e6; padding: 1rem; margin-bottom: 1.5rem; }
+
+/* Launch bar controls (2.1).
+   Square and flat like the rest of the 2.0 chrome; the desktop itself is the
+   only thing on this page that should draw the eye. */
+.viper-launch-action {
+  background: #fff;
+  border: 1px solid var(--opf-blue, #137DA4);
+  border-radius: var(--radius-chrome, 0);
+  color: var(--opf-blue, #137DA4);
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.7rem;
+  margin-left: 0.5rem;
+  cursor: pointer;
+}
+.viper-launch-action:hover:not(:disabled) {
+  background: var(--opf-blue, #137DA4);
+  color: #fff;
+}
+.viper-launch-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.viper-launch-action.is-confirm {
+  border-color: #b3202c;
+  color: #b3202c;
+}
+.viper-launch-action.is-confirm:hover {
+  background: #b3202c;
+  color: #fff;
+}
+
+/* Deliberately loud. It is asking someone to give up the protection the
+   framed desktop exists to provide. */
+.viper-launch-warning {
+  border: 1px solid #b3202c;
+  border-left: 6px solid #b3202c;
+  border-radius: var(--radius-chrome, 0);
+  background: #fff;
+  color: #2c3e50;
+  padding: 0.9rem 1rem;
+  margin: 0.75rem 1rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+.viper-launch-warning-actions {
+  margin-top: 0.75rem;
+}
+.viper-launch-warning-actions .viper-launch-action:first-child {
+  margin-left: 0;
+}

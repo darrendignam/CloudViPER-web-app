@@ -2,7 +2,25 @@
     <div class="viper-launch-bar">
         <span class="viper-launch-title">{{instanceName}}</span>
         <span class="viper-launch-status" id="connection-status">Requesting access</span>
+        <button type="button" class="viper-launch-action" id="fullscreen-button" disabled>
+            <span aria-hidden="true">&#9974;</span> Fullscreen
+        </button>
+        <button type="button" class="viper-launch-action" id="popout-button" disabled>
+            <span aria-hidden="true">&#8599;</span> Open in new tab
+        </button>
         <a class="viper-launch-back" href="/service">Back to instances</a>
+    </div>
+
+    <div class="viper-launch-warning" id="popout-warning" hidden>
+        <strong>Opening in a new tab puts the access token in the address bar.</strong>
+        It will then be visible on screen, saved in browser history, and carried
+        in anything you copy or share from that tab. The framed desktop exists to
+        avoid exactly that. Anyone who reads the token can drive this desktop
+        until it is revoked.
+        <div class="viper-launch-warning-actions">
+            <button type="button" class="viper-launch-action is-confirm" id="popout-confirm">Open anyway</button>
+            <button type="button" class="viper-launch-action" id="popout-cancel">Cancel</button>
+        </div>
     </div>
     <iframe
         id="viper-frame"
@@ -20,6 +38,7 @@
         var frame = document.getElementById('viper-frame');
         var uuid = container.getAttribute('data-instance-uuid');
         var settled = false;
+        var desktopUrl = null;
 
         function fail(message) {
             settled = true;
@@ -81,7 +100,10 @@
             return response.json();
         }).then(function (body) {
             status.textContent = body.role === 'viewer' ? 'Connecting, view only' : 'Connecting';
+            desktopUrl = body.url;
             frame.src = body.url;
+            document.getElementById('fullscreen-button').disabled = false;
+            document.getElementById('popout-button').disabled = false;
             confirmReachable();
         }).catch(function (error) {
             fail(error.message);
@@ -92,5 +114,47 @@
                 status.textContent = 'Still connecting, this can take a moment on first start';
             }
         }, 15000);
+
+        // Fullscreen keeps the token where it is. The browser exits on Escape
+        // and says so itself, so there is no need to explain it here, but the
+        // button still has to track the state or it lies about what it does.
+        var fullscreenButton = document.getElementById('fullscreen-button');
+
+        fullscreenButton.addEventListener('click', function () {
+            if (document.fullscreenElement) {
+                document.exitFullscreen();
+            } else if (container.requestFullscreen) {
+                container.requestFullscreen().catch(function () {
+                    status.textContent = 'This browser refused fullscreen';
+                });
+            }
+        });
+
+        document.addEventListener('fullscreenchange', function () {
+            fullscreenButton.innerHTML = document.fullscreenElement
+                ? '<span aria-hidden="true">&#9974;</span> Exit fullscreen'
+                : '<span aria-hidden="true">&#9974;</span> Fullscreen';
+        });
+
+        // Popping out trades the whole point of the frame for a resizable
+        // window, so it asks first rather than assuming.
+        var popoutButton = document.getElementById('popout-button');
+        var popoutWarning = document.getElementById('popout-warning');
+
+        popoutButton.addEventListener('click', function () {
+            popoutWarning.hidden = false;
+        });
+
+        document.getElementById('popout-cancel').addEventListener('click', function () {
+            popoutWarning.hidden = true;
+        });
+
+        document.getElementById('popout-confirm').addEventListener('click', function () {
+            popoutWarning.hidden = true;
+            if (!desktopUrl) return;
+            // noopener so the new tab cannot reach back into this one through
+            // window.opener, which would hand it the session it was opened from.
+            window.open(desktopUrl, '_blank', 'noopener');
+        });
     })();
 </script>
