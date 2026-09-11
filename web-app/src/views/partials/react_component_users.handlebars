@@ -21,21 +21,19 @@ class UserList extends React.Component {
   }
 
   fetchTeams = () => {
-    fetch('/account/teams')
-      .then((response) => response.json())
+    fetchJson('/account/teams')
       .then((teams) => this.setState({ teams }))
       .catch((error) => console.error('Error fetching teams:', error));
   };
 
   handleRoleChange = (userId, newRole) => {
-    fetch(`/account/users/${userId}/role`, {
+    fetchJson(`/account/users/${userId}/role`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ role: newRole }),
     })
-      .then((response) => response.json())
       .then((data) => {
         console.log('Role update response:', data);
         this.fetchUsers();
@@ -47,14 +45,13 @@ class UserList extends React.Component {
   };
 
   handleTeamChange = (userId, newTeam) => {
-    fetch(`/account/users/${userId}/team`, {
+    fetchJson(`/account/users/${userId}/team`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ team: newTeam }),
     })
-      .then((response) => response.json())
       .then((data) => {
         console.log('Team update response:', data);
         this.fetchUsers();
@@ -68,8 +65,7 @@ class UserList extends React.Component {
 
   fetchUsers = () => {
     this.setState({ isLoading: true });
-    fetch('/account/users')
-      .then((response) => response.json())
+    fetchJson('/account/users')
       .then((data) => this.setState({ users: data, isLoading: false }))
       .catch((error) => this.setState({ error, isLoading: false }));
   };
@@ -88,14 +84,13 @@ class UserList extends React.Component {
       requestBody.team = newUserTeam;
     }
     
-    fetch('/account/users/invite', {
+    fetchJson('/account/users/invite', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(requestBody),
     })
-      .then((response) => response.json())
       .then((data) => {
         if (data.message) {
           alert(data.message);

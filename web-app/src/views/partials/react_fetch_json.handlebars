@@ -1,0 +1,45 @@
+  // Shared JSON fetch for every dashboard component.
+  //
+  // Calling response.json() without first checking response.ok is how a
+  // perfectly ordinary event, the app restarting during a deploy, surfaced to
+  // users as:
+  //
+  //     Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+  //
+  // While the container is coming back, the proxy answers with an HTML error
+  // page. The parse then fails on the first character of the markup, and the
+  // message describes the symptom in terms of JSON syntax, which tells a user
+  // nothing about what actually happened or that it will fix itself.
+  //
+  // Every component polls, so any component that parses blindly will show that
+  // at least once per deploy.
+  function fetchJson(url, options) {
+    return fetch(url, Object.assign({ credentials: 'same-origin' }, options || {}))
+      .then(function (response) {
+        var contentType = response.headers.get('content-type') || '';
+
+        if (!response.ok) {
+          // A JSON body means the application answered and explained itself, so
+          // prefer its message over anything invented here.
+          if (contentType.indexOf('application/json') !== -1) {
+            return response.json()
+              .catch(function () { return {}; })
+              .then(function (body) {
+                throw new Error(body.error || body.message || ('Request failed (' + response.status + ')'));
+              });
+          }
+
+          if (response.status === 502 || response.status === 503 || response.status === 504) {
+            throw new Error('The server is restarting, retrying shortly');
+          }
+
+          throw new Error('Request failed (' + response.status + ')');
+        }
+
+        if (contentType.indexOf('application/json') === -1) {
+          throw new Error('The server returned an unexpected response');
+        }
+
+        return response.json();
+      });
+  }

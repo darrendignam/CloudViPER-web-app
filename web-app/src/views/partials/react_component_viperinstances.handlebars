@@ -265,8 +265,7 @@
       }
 
       fetchInstances = () => {
-        fetch('/service/viperinstances')
-          .then(response => response.json())
+        fetchJson('/service/viperinstances')
           .then(data => {
             // Handle the new API response format
             let instances = [];
@@ -968,7 +967,7 @@ Current Activity Score: ${data.summary.currentScore || 0}`);
                       
                       {/* Human-readable metadata */}
                       <div className="details-section">
-                        <h4><i class="fas fa-chart-line"></i> Instance Metadata</h4>
+                        <h4><i className="fas fa-chart-line"></i> Instance Metadata</h4>
                         <div className="metadata-grid">
                           <div><strong>Operational Time:</strong> {instanceDetails.operationalHours || 'Unknown'} hours</div>
                           <div><strong>Owner:</strong> {this.formatOwnerInfo(instanceDetails.instance)}</div>

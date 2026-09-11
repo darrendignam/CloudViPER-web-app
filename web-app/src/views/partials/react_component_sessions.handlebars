@@ -16,8 +16,7 @@ class SessionList extends React.Component {
 
       loadSessions = () => {
         this.setState({ isLoading: true, error: null });
-        fetch('/account/sessions')
-          .then(response => response.json())
+        fetchJson('/account/sessions')
           .then(data => this.setState({ sessions: data, isLoading: false }))
           .catch(error => this.setState({ error, isLoading: false }));
       }
