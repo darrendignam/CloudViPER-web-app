@@ -44,7 +44,7 @@ services:
       - "traefik.http.routers.cloudviper-app.rule=Host(`${DOMAIN_NAME:-vipercloud.cc}`)"
       - "traefik.http.routers.cloudviper-app.entrypoints=websecure"
       - "traefik.http.routers.cloudviper-app.tls=true"
-      - "traefik.http.routers.cloudviper-app.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.cloudviper-app.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
       - "traefik.http.services.cloudviper-app.loadbalancer.server.port=3000"
       - "traefik.docker.network=cloudviper_ingress"
     command: [ "node", "dist/app.js" ]
@@ -102,7 +102,7 @@ services:
       - "traefik.http.routers.pma-cloudviper.rule=Host(`pma.${DOMAIN_NAME:-vipercloud.cc}`)"
       - "traefik.http.routers.pma-cloudviper.entrypoints=websecure"
       - "traefik.http.routers.pma-cloudviper.tls=true"
-      - "traefik.http.routers.pma-cloudviper.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.pma-cloudviper.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
       - "traefik.http.services.pma-cloudviper.loadbalancer.server.port=80"
       - "traefik.docker.network=cloudviper_ingress"
 
