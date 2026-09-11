@@ -146,13 +146,11 @@ describe('isEmailConfigured', () => {
 
     it('should be false without an API key', () => {
         delete process.env.MAILERSEND_API_KEY;
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
         expect(require('../../../utility/emailRelay').isEmailConfigured()).toBe(false);
     });
 
     it('should be true with an API key', () => {
         process.env.MAILERSEND_API_KEY = 'a-key';
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
         expect(require('../../../utility/emailRelay').isEmailConfigured()).toBe(true);
     });
 });
@@ -183,7 +181,6 @@ describe('sender and link domains are configured separately', () => {
         if (from === undefined) delete process.env.MAIL_FROM_DOMAIN;
         else process.env.MAIL_FROM_DOMAIN = from;
         jest.resetModules();
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
         return require('../../../utility/emailRelay').default;
     }
 
