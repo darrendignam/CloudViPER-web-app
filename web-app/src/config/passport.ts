@@ -6,6 +6,12 @@ import db from '../models';
 import configAuth, { isGoogleAuthConfigured } from './auth';
 import helperFunctions from '../utility/helperFunctions';
 
+// Recorded on the account so the admin user list can say how someone signs in.
+// Both Google paths must set it: the one that creates an account and the one
+// that links an existing one, or an invited user who adopts their account
+// through Google shows up as though they had never used it.
+const GOOGLE_PROVIDER = 'google';
+
 const options = {
     usernameField: 'email',
     // usernameField: 'username',
@@ -85,8 +91,12 @@ export default (passport: PassportStatic) => {
                     db.User.findOne({ where: { email: _email } })
                     .then((existingUser: any | null) => {
                         if (existingUser) {
-                            // Update the existing user with the oauthID
+                            // Link the Google identity to the account that
+                            // already holds this address. This is the path an
+                            // invited user takes: the account exists, and
+                            // signing in with Google adopts it.
                             existingUser.oauthID = profile.id;
+                            existingUser.oauthProvider = GOOGLE_PROVIDER;
                             existingUser.save().then((updatedUser: any) => {
                                 return done(null, updatedUser);
                             }).catch((err: any) => {
@@ -98,6 +108,7 @@ export default (passport: PassportStatic) => {
                                 username: helperFunctions.sanitizeUsername(profile.displayName),
                                 email: _email,
                                 oauthID: profile.id,
+                                oauthProvider: GOOGLE_PROVIDER,
                                 role: helperFunctions.updateRoleIfAdmin(_email),
                             });
                             newUser.save().then((savedUser: any) => {

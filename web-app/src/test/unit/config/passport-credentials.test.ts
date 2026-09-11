@@ -16,10 +16,16 @@ jest.mock('passport-local', () => ({
     })
 }));
 
+let capturedGoogleVerify: any;
+
 jest.mock('passport-google-oauth20', () => ({
-    Strategy: jest.fn().mockImplementation(() => ({ name: 'google' }))
+    Strategy: jest.fn().mockImplementation((_options: any, verify: any) => {
+        capturedGoogleVerify = verify;
+        return { name: 'google' };
+    })
 }));
 
+const mockBuild = jest.fn();
 const mockGoogleConfigured = jest.fn(() => true);
 jest.mock('../../../config/auth', () => ({
     __esModule: true,
@@ -30,7 +36,12 @@ jest.mock('../../../config/auth', () => ({
 const mockFindOne = jest.fn();
 jest.mock('../../../models', () => ({
     __esModule: true,
-    default: { User: { findOne: (...args: any[]) => mockFindOne(...args) } }
+    default: {
+        User: {
+            findOne: (...args: any[]) => mockFindOne(...args),
+            build: (...args: any[]) => mockBuild(...args)
+        }
+    }
 }));
 
 const mockLoggerInfo = jest.fn();
@@ -156,5 +167,53 @@ describe('LocalStrategy dev logging', () => {
 
         expect(done).toHaveBeenCalledWith(null, false, { message: 'Incorrect username' });
         expect(JSON.stringify(mockLoggerInfo.mock.calls)).not.toContain(PASSWORD);
+    });
+});
+
+describe('Google sign-in records how someone signs in', () => {
+    // The admin user list shows an OAuth Provider column. Setting oauthID
+    // without oauthProvider left it blank for exactly the accounts that do use
+    // OAuth, which is the opposite of what the column is for.
+    const PROFILE = { id: 'google-oauth-id-123', displayName: 'Someone', emails: [{ value: 'someone@example.org' }] };
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        capturedGoogleVerify = undefined;
+        mockGoogleConfigured.mockReturnValue(true);
+        configurePassport(buildPassport());
+    });
+
+    it('should record the provider when creating a new account', async () => {
+        mockFindOne.mockResolvedValue(null);
+        const saved = { id: 7 };
+        const built = { save: jest.fn().mockResolvedValue(saved) };
+        mockBuild.mockReturnValue(built);
+
+        const done = jest.fn();
+        capturedGoogleVerify!('token', 'refresh', PROFILE, done);
+        await new Promise(process.nextTick);
+
+        expect(mockBuild).toHaveBeenCalledWith(
+            expect.objectContaining({ oauthID: PROFILE.id, oauthProvider: 'google' })
+        );
+    });
+
+    it('should record the provider when adopting an existing account', async () => {
+        // The path an invited user takes: the account already exists and
+        // signing in with Google claims it.
+        const existing: any = { id: 3, email: PROFILE.emails[0].value, save: jest.fn() };
+        existing.save.mockResolvedValue(existing);
+        mockFindOne
+            .mockResolvedValueOnce(null)      // no account with this oauthID yet
+            .mockResolvedValueOnce(existing); // but one with this email
+
+        const done = jest.fn();
+        capturedGoogleVerify!('token', 'refresh', PROFILE, done);
+        await new Promise(process.nextTick);
+        await new Promise(process.nextTick);
+
+        expect(existing.oauthID).toBe(PROFILE.id);
+        expect(existing.oauthProvider).toBe('google');
+        expect(existing.save).toHaveBeenCalled();
     });
 });
