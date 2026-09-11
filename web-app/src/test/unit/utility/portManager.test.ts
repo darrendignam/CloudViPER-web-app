@@ -21,18 +21,22 @@ describe('Port Manager Utility', () => {
         });
 
         it('should skip ports that are in use', async () => {
-            // Create a server on port 4000
+            // Port 0 asks the OS for a free port rather than naming one. A
+            // hardcoded port hangs the whole suite for its 30 second timeout
+            // whenever anything else on the machine already holds it, and
+            // close() has to be awaited or the listener outlives the test and
+            // skews the next one.
             const testServer = net.createServer();
             await new Promise<void>((resolve) => {
-                testServer.listen(4000, '127.0.0.1', resolve);
+                testServer.listen(0, '127.0.0.1', resolve);
             });
+            const occupiedPort = (testServer.address() as net.AddressInfo).port;
 
             try {
-                // Should return 4001 or higher since 4000 is occupied
-                const port = await getAvailablePort(4000, 4010);
-                expect(port).toBeGreaterThan(4000);
+                const port = await getAvailablePort(occupiedPort, occupiedPort + 10);
+                expect(port).toBeGreaterThan(occupiedPort);
             } finally {
-                testServer.close();
+                await new Promise<void>((resolve) => testServer.close(() => resolve()));
             }
         });
 
