@@ -1638,3 +1638,18 @@ input.form-control:focus {
   margin-top: 0.5rem;
   font-size: 0.9rem;
 }
+
+/* Saving a build instance resets the desktop it came from, and that is not
+   recoverable, so it is stated before the button rather than after. */
+.save-image-warning {
+  border: 1px solid var(--opf-pink, #C73079);
+  border-left: 6px solid var(--opf-pink, #C73079);
+  border-radius: var(--radius-chrome, 0);
+  background: #fff;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+.save-image-warning p {
+  margin: 0.4rem 0 0;
+}

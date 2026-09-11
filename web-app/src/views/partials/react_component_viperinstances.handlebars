@@ -248,6 +248,14 @@
           selectedImageId: '',
           buildMode: false,
           launchError: null,
+          // Saving a build instance as an image
+          saveTarget: null,
+          saveName: '',
+          saveTag: 'latest',
+          saveDescription: '',
+          savePromote: true,
+          saving: false,
+          saveError: null,
           // Screenshot carousel state
           screenshotCarousels: {}, // Store carousel data for each instance
           // Screenshot modal state
@@ -273,6 +281,46 @@
       // gets their team's default, which is the point of having a default.
       canChooseImage = () => {
         return ['admin', 'team_admin', 'team_leader'].indexOf(this.props.userRole) !== -1;
+      };
+
+      openSaveAsImage = (instance) => {
+        this.setState({
+          saveTarget: instance,
+          saveName: '',
+          saveTag: 'latest',
+          saveDescription: '',
+          savePromote: true,
+          saveError: null
+        });
+      };
+
+      closeSaveAsImage = () => this.setState({ saveTarget: null, saveError: null });
+
+      submitSaveAsImage = () => {
+        const { saveTarget, saveName, saveTag, saveDescription, savePromote } = this.state;
+        if (!saveName.trim()) {
+          this.setState({ saveError: 'A name is required' });
+          return;
+        }
+
+        this.setState({ saving: true, saveError: null });
+
+        fetchJson('/images/api/commit/' + encodeURIComponent(saveTarget.uuid), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: saveName.trim(),
+            tag: saveTag.trim() || 'latest',
+            description: saveDescription,
+            promoteDesktop: savePromote
+          })
+        })
+          .then(() => {
+            this.setState({ saving: false, saveTarget: null });
+            this.fetchInstances();
+            if (this.canChooseImage()) this.fetchLaunchableImages();
+          })
+          .catch(error => this.setState({ saving: false, saveError: error.message }));
       };
 
       fetchLaunchableImages = () => {
@@ -902,7 +950,7 @@ Current Activity Score: ${data.summary.currentScore || 0}`);
       }
 
       render() {
-        const { instances, isLoading, error, selectedInstance, instanceDetails, detailsLoading, filters, showFilters, screenshotModal, launchableImages, selectedImageId, buildMode, launchError } = this.state;
+        const { instances, isLoading, error, selectedInstance, instanceDetails, detailsLoading, filters, showFilters, screenshotModal, launchableImages, selectedImageId, buildMode, launchError, saveTarget, saveName, saveTag, saveDescription, savePromote, saving, saveError } = this.state;
         const filteredInstances = this.getFilteredInstances();
 
         if (isLoading) {
@@ -1016,6 +1064,94 @@ Current Activity Score: ${data.summary.currentScore || 0}`);
 
               {launchError && <p className="launch-error">{launchError}</p>}
             </div>
+
+            {saveTarget && (
+              <div className="instance-details-overlay" onClick={this.closeSaveAsImage}>
+                <div className="instance-details-modal" onClick={(e) => e.stopPropagation()}>
+                  <div className="modal-header">
+                    <h3>Save {saveTarget.name} as an image</h3>
+                    <button className="btn btn-sm btn-secondary" onClick={this.closeSaveAsImage}>Close</button>
+                  </div>
+
+                  <div className="modal-body">
+                    {/* Saying this before the button, not after. Both effects are
+                        irreversible and neither is obvious from "save as image". */}
+                    <div className="save-image-warning">
+                      <strong>This resets the desktop you are saving from.</strong>
+                      <p>
+                        Everything under <code>/config</code> is cleared before the snapshot:
+                        files, shell history, browser session. That is what stops your
+                        personal state reaching everyone who launches this image, and it
+                        applies to this running instance too. Treat a build instance as
+                        disposable once you have saved it.
+                      </p>
+                    </div>
+
+                    <div className="form-group">
+                      <label htmlFor="save-name">Name</label>
+                      <input
+                        id="save-name"
+                        className="form-control"
+                        placeholder="ViPER with extra tooling"
+                        value={saveName}
+                        onChange={(e) => this.setState({ saveName: e.target.value })}
+                      />
+                      <small className="text-muted">
+                        Becomes the image reference, lowercased and hyphenated.
+                      </small>
+                    </div>
+
+                    <div className="form-group">
+                      <label htmlFor="save-tag">Tag</label>
+                      <input
+                        id="save-tag"
+                        className="form-control"
+                        value={saveTag}
+                        onChange={(e) => this.setState({ saveTag: e.target.value })}
+                      />
+                    </div>
+
+                    <div className="form-group">
+                      <label htmlFor="save-description">Description</label>
+                      <textarea
+                        id="save-description"
+                        className="form-control"
+                        rows="2"
+                        value={saveDescription}
+                        onChange={(e) => this.setState({ saveDescription: e.target.value })}
+                      />
+                    </div>
+
+                    <div className="form-group">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={savePromote}
+                          onChange={(e) => this.setState({ savePromote: e.target.checked })}
+                        />{' '}
+                        Keep my desktop layout for everyone
+                      </label>
+                      <small className="text-muted d-block">
+                        Copies your menu and autostart into the image defaults first, so
+                        they survive the reset and reach every user. Without this, desktop
+                        changes are lost and only system-level changes remain.
+                      </small>
+                    </div>
+
+                    {saveError && <p className="launch-error">{saveError}</p>}
+                  </div>
+
+                  <div className="modal-footer">
+                    <button className="btn btn-secondary" onClick={this.closeSaveAsImage} disabled={saving}>
+                      Cancel
+                    </button>
+                    <button className="btn btn-primary" onClick={this.submitSaveAsImage} disabled={saving}>
+                      {saving ? 'Saving, this takes a moment...' : 'Save as image'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Instance Details Modal */}
             {selectedInstance && (
@@ -1230,6 +1366,14 @@ Current Activity Score: ${data.summary.currentScore || 0}`);
                                     onClick={() => this.viewScreenshot(instance.uuid)}
                                   >
                                     <i className="fas fa-camera"></i> Screenshot
+                                  </button>
+                                )}
+                                {this.isAdmin() && instance.isBuildInstance && instance.status !== 'deleted' && (
+                                  <button
+                                    className="btn btn-success btn-sm"
+                                    onClick={() => this.openSaveAsImage(instance)}
+                                  >
+                                    <i className="fas fa-layer-group"></i> Save as Image
                                   </button>
                                 )}
                                 <button 
