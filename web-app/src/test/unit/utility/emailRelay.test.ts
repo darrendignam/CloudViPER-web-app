@@ -3,6 +3,11 @@ import { MailerSend } from 'mailersend';
 // Create a mock send function that we can spy on
 const mockSend = jest.fn();
 
+// What each message was addressed from, and what it actually said. Without
+// these a test can only prove a send happened, not that it was correct.
+const sentFrom: any[] = [];
+const sentBodies: string[] = [];
+
 // Mock MailerSend
 jest.mock('../../../config/logger', () => ({
   appLogger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
@@ -17,11 +22,11 @@ jest.mock('mailersend', () => ({
     }
   })),
   EmailParams: jest.fn().mockImplementation(() => ({
-    setFrom: jest.fn().mockReturnThis(),
+    setFrom: jest.fn(function (this: any, sender: any) { sentFrom.push(sender); return this; }),
     setTo: jest.fn().mockReturnThis(),
     setSubject: jest.fn().mockReturnThis(),
-    setText: jest.fn().mockReturnThis(),
-    setHtml: jest.fn().mockReturnThis()
+    setText: jest.fn(function (this: any, body: string) { sentBodies.push(body); return this; }),
+    setHtml: jest.fn(function (this: any, body: string) { sentBodies.push(body); return this; })
   })),
   Recipient: jest.fn().mockImplementation((email, name) => ({ email, name })),
   Sender: jest.fn().mockImplementation((email, name) => ({ email, name }))
@@ -149,5 +154,55 @@ describe('isEmailConfigured', () => {
         process.env.MAILERSEND_API_KEY = 'a-key';
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         expect(require('../../../utility/emailRelay').isEmailConfigured()).toBe(true);
+    });
+});
+
+describe('sender and link domains are configured separately', () => {
+    // A provider only sends as a domain verified with it, and that verification
+    // is DNS work. An appliance on a new host therefore needs to send as an
+    // established domain while every link points at its own, or the recipient
+    // gets a message that either never arrives or leads back to the wrong site.
+    const ORIGINAL_DOMAIN = process.env.DOMAIN_NAME;
+    const ORIGINAL_FROM = process.env.MAIL_FROM_DOMAIN;
+
+    afterEach(() => {
+        if (ORIGINAL_DOMAIN === undefined) delete process.env.DOMAIN_NAME;
+        else process.env.DOMAIN_NAME = ORIGINAL_DOMAIN;
+        if (ORIGINAL_FROM === undefined) delete process.env.MAIL_FROM_DOMAIN;
+        else process.env.MAIL_FROM_DOMAIN = ORIGINAL_FROM;
+        jest.resetModules();
+    });
+
+    beforeEach(() => {
+        sentFrom.length = 0;
+        sentBodies.length = 0;
+    });
+
+    function loadWith(domain: string, from?: string) {
+        process.env.DOMAIN_NAME = domain;
+        if (from === undefined) delete process.env.MAIL_FROM_DOMAIN;
+        else process.env.MAIL_FROM_DOMAIN = from;
+        jest.resetModules();
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        return require('../../../utility/emailRelay').default;
+    }
+
+    it('should send from the app domain when no sender domain is set', async () => {
+        const relay = loadWith('example.org');
+        await relay.sendWelcomeEmail('someone@elsewhere.test', 'someone');
+
+        expect(sentFrom[sentFrom.length - 1].email).toBe('no-reply@example.org');
+    });
+
+    it('should send from the configured sender domain while linking to the app domain', async () => {
+        const relay = loadWith('vipercloud.cc', 'cloudviper.org');
+        await relay.sendResetEmail('someone@elsewhere.test', 'someone', 'tok123');
+
+        expect(sentFrom[sentFrom.length - 1].email).toBe('no-reply@cloudviper.org');
+
+        // The link must lead to the host the recipient is meant to reach.
+        const body = sentBodies.join('\n');
+        expect(body).toContain('vipercloud.cc/account/reset-token/tok123');
+        expect(body).not.toContain('cloudviper.org/account/reset-token');
     });
 });

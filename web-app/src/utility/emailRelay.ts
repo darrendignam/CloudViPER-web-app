@@ -1,9 +1,17 @@
 import { MailerSend, EmailParams, Recipient, Sender } from "mailersend";
 import { appLogger } from '../config/logger';
 
-// Get domain name from environment variable
+// Where the app lives. Every link in every message points here, so it has to be
+// the host the recipient can actually reach.
 const DOMAIN_NAME = process.env.DOMAIN_NAME || 'cloudviper.org';
-const DOMAIN_WITHOUT_WWW = DOMAIN_NAME.replace(/^www\./, '');
+
+// Who the message comes from, which is a different question. A provider will
+// only send as a domain that has been verified with it, and that verification
+// is DNS work on the sending domain. An appliance on a new host can therefore
+// need to send as an established domain while linking to its own, so the two
+// are configured separately rather than both derived from DOMAIN_NAME.
+const MAIL_FROM_DOMAIN = (process.env.MAIL_FROM_DOMAIN || DOMAIN_NAME).replace(/^www\./, '');
+const MAIL_FROM_ADDRESS = process.env.MAIL_FROM_ADDRESS || `no-reply@${MAIL_FROM_DOMAIN}`;
 
 /**
  * Interface defining the email relay service methods
@@ -53,7 +61,7 @@ const _footer =  '<h3>&nbsp;-&nbsp;CloudViPER team</h3><div style="font-size: 12
 
 const emailRelay: EmailRelay = {
     sendWelcomeEmail: async (in_email: string, in_username: string): Promise<void> => {
-        const sentFrom = new Sender(`no-reply@${DOMAIN_WITHOUT_WWW}`, "CloudViPER");
+        const sentFrom = new Sender(MAIL_FROM_ADDRESS, "CloudViPER");
         const recipients = [new Recipient(in_email, in_username)];
 
         const emailParams = new EmailParams()
@@ -76,7 +84,7 @@ const emailRelay: EmailRelay = {
         }
     },
     sendInvitedEmail: async (in_email: string, in_username: string, in_invitee: string): Promise<void> => {
-        const sentFrom = new Sender(`no-reply@${DOMAIN_WITHOUT_WWW}`, "CloudViPER");
+        const sentFrom = new Sender(MAIL_FROM_ADDRESS, "CloudViPER");
         const recipients = [new Recipient(in_email, in_username)];
 
         const emailParams = new EmailParams()
@@ -105,7 +113,7 @@ const emailRelay: EmailRelay = {
         }
     },
     sendResetEmail: async (in_email: string, in_username: string, in_token: string): Promise<void> => {
-        const sentFrom = new Sender(`no-reply@${DOMAIN_WITHOUT_WWW}`, "CloudViPER");
+        const sentFrom = new Sender(MAIL_FROM_ADDRESS, "CloudViPER");
         const recipients = [new Recipient(in_email, in_username)];
 
         const emailParams = new EmailParams()
