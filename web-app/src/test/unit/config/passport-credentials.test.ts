@@ -20,6 +20,13 @@ jest.mock('passport-google-oauth20', () => ({
     Strategy: jest.fn().mockImplementation(() => ({ name: 'google' }))
 }));
 
+const mockGoogleConfigured = jest.fn(() => true);
+jest.mock('../../../config/auth', () => ({
+    __esModule: true,
+    default: { googleAuth: { clientID: 'id', clientSecret: 'secret', callbackURL: 'https://example.org/cb' } },
+    isGoogleAuthConfigured: () => mockGoogleConfigured()
+}));
+
 const mockFindOne = jest.fn();
 jest.mock('../../../models', () => ({
     __esModule: true,
@@ -48,6 +55,46 @@ function buildPassport() {
         deserializeUser: jest.fn()
     } as any;
 }
+
+describe('optional Google sign-in', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        capturedVerify = undefined;
+        mockGoogleConfigured.mockReturnValue(true);
+    });
+
+    it('should still configure local auth when Google is not set up', () => {
+        // Registering the Google strategy without a client id throws, which
+        // took the entire process down on an appliance that does not use it.
+        mockGoogleConfigured.mockReturnValue(false);
+        const passportMock = buildPassport();
+
+        expect(() => configurePassport(passportMock)).not.toThrow();
+
+        const registered = passportMock.use.mock.calls.map((call: any) => call[0]?.name);
+        expect(registered).toContain('local');
+        expect(registered).not.toContain('google');
+    });
+
+    it('should still wire session serialisation without Google', () => {
+        // Skipping the strategy must not skip everything after it.
+        mockGoogleConfigured.mockReturnValue(false);
+        const passportMock = buildPassport();
+
+        configurePassport(passportMock);
+
+        expect(passportMock.serializeUser).toHaveBeenCalled();
+        expect(passportMock.deserializeUser).toHaveBeenCalled();
+    });
+
+    it('should register Google when it is configured', () => {
+        const passportMock = buildPassport();
+
+        configurePassport(passportMock);
+
+        expect(passportMock.use.mock.calls.map((call: any) => call[0]?.name)).toContain('google');
+    });
+});
 
 describe('LocalStrategy dev logging', () => {
     const ORIGINAL_ENV = process.env.NODE_ENV;

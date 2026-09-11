@@ -6,7 +6,7 @@ import passport from 'passport';
 import crypto from 'crypto';
 import helperFunctions from '../utility/helperFunctions';
 import emailRelay from '../utility/emailRelay';
-import configAuth from '../config/auth';
+import configAuth, { isGoogleAuthConfigured } from '../config/auth';
 import { appLogger } from '../config/logger';
 import viperInstanceService from '../services/ViperInstanceService';
 import { UserRole, isValidRole, toUserRole } from '../types/UserRole';
@@ -686,7 +686,11 @@ router.delete('/sessions', (req: Request, res: Response): void => {
 router.get('/login', (req: Request, res: Response) => {
     //Force log out? redirect if already logged in?
     const errorMsg = req.flash('error');
-    res.render('user_account_login', { error_message: errorMsg });
+    res.render('user_account_login', {
+        error_message: errorMsg,
+        // Offering a button that cannot work is worse than not offering it.
+        googleAuthEnabled: isGoogleAuthConfigured()
+    });
 });
 
 
@@ -791,9 +795,25 @@ router.get('/logout', async (req: Request, res: Response) => {
 });
 
 //Google oAuth routes
-router.get('/login/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+// Guarded because the strategy is only registered when it is configured, and
+// passport.authenticate against an unregistered strategy throws rather than
+// failing politely.
+router.get('/login/google', (req: Request, res: Response, next) => {
+    if (!isGoogleAuthConfigured()) {
+        req.flash('error', 'Google sign-in is not enabled on this server');
+        res.redirect('/account/login');
+        return;
+    }
+    passport.authenticate('google', { scope: ['profile', 'email'] })(req, res, next);
+});
 
-router.get('/google/return', passport.authenticate('google', { failureRedirect: '/account/login', failureFlash: true }), (req, res) => {
+router.get('/google/return', (req: Request, res: Response, next) => {
+    if (!isGoogleAuthConfigured()) {
+        res.redirect('/account/login');
+        return;
+    }
+    next();
+}, passport.authenticate('google', { failureRedirect: '/account/login', failureFlash: true }), (req, res) => {
     const user = req.user as AccountUser;
     
     // Log successful Google OAuth login

@@ -131,3 +131,7 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# Test corpora shipped to instances, not source. 190MB of tarball that GitHub
+# refuses outright, and that a stray `git add src` will otherwise pick up.
+src/public/files/

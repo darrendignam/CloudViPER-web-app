@@ -3,7 +3,7 @@ import { appLogger } from '../config/logger';
 import { Strategy as LocalStrategy } from 'passport-local';
 import { PassportStatic } from 'passport';
 import db from '../models';
-import configAuth from './auth';
+import configAuth, { isGoogleAuthConfigured } from './auth';
 import helperFunctions from '../utility/helperFunctions';
 
 const options = {
@@ -60,6 +60,17 @@ export default (passport: PassportStatic) => {
         }).catch(done);
     });
     
+    // Registering the strategy without a client id throws, which took the whole
+    // process down on an appliance that simply does not use Google sign-in.
+    // Optional means optional: skip it and leave the rest of auth working.
+    if (!isGoogleAuthConfigured()) {
+        appLogger.warn('Google sign-in is not configured, skipping that strategy', {
+            eventType: 'Google Auth Disabled',
+            timestamp: new Date().toISOString()
+        });
+        return;
+    }
+
     passport.use(new GoogleStrategy(configAuth.googleAuth, 
         (accessToken: string, refreshToken: string, profile: any, done: (err: any, user?: any) => void) => {
             const _email = profile.emails[0].value || '';

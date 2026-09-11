@@ -25,10 +25,12 @@
                     <button type="submit">Sign In</button>
                 </form>
 
+                {{#if googleAuthEnabled}}
                 <a href="/account/login/google" class="google-btn">
                     <img src="https://img.icons8.com/color/16/000000/google-logo.png" alt="Google"/> 
                     Login with Google
                 </a>
+                {{/if}}
                 
                 <p class="cookie-notice">The admin section of the website uses functional cookies.</p>
                 <p class="login-links"><a href="/account/register">Register New Account</a> | <a href="/account/reset-password">Forgot Password?</a></p>

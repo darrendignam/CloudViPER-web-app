@@ -61,6 +61,9 @@ jest.mock('mysql2', () => ({
 
 // Mock config/auth
 jest.mock('../../../config/auth', () => ({
+  // Named export used by the routes to decide whether to offer Google
+  // sign-in at all; without it the route throws rather than skipping.
+  isGoogleAuthConfigured: () => false,
   mysqlSessionAuth: {
     host: 'localhost',
     user: 'test',
