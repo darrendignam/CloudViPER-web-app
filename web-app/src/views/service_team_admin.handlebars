@@ -115,6 +115,7 @@
 <script type="text/babel">
   {{> react_component_users }}
   {{> react_component_viperinstances }}
+  {{> react_component_images }}
 
   class TeamAdminDashboard extends React.Component {
     constructor(props) {
@@ -157,6 +158,7 @@
       const userEmail = '{{{user.email}}}';
       const userRole = '{{{user.role}}}';
       const userTeam = '{{{user.team}}}' || null;
+      const userTeamId = {{#if user.teamId}}{{{user.teamId}}}{{else}}null{{/if}};
 
       const tabs = [
         {
@@ -165,6 +167,13 @@
           icon: 'fas fa-users',
           component: <UserList userRole={userRole} userTeam={userTeam} currentUserId={'{{{user.id}}}'} />,
           description: 'Manage your team members and invite new users'
+        },
+        {
+          id: 'images',
+          label: 'Container Images',
+          icon: 'fas fa-layer-group',
+          component: <ImagePool userRole={userRole} userTeamId={userTeamId} />,
+          description: 'Choose the default image for your team'
         },
         {
           id: 'instances',

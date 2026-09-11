@@ -1,0 +1,203 @@
+  class ImagePool extends React.Component {
+    // Driven by props rather than page globals, so the same component serves
+    // the standalone page and a dashboard tab without either knowing about the
+    // other.
+    isAdmin = () => this.props.userRole === 'admin';
+    teamId = () => this.props.userTeamId || null;
+
+    formatSize = (bytes) => {
+      if (bytes === null || bytes === undefined) return 'unknown';
+      const gb = bytes / (1024 * 1024 * 1024);
+      return gb >= 1 ? gb.toFixed(2) + ' GB' : (bytes / (1024 * 1024)).toFixed(0) + ' MB';
+    };
+
+    constructor(props) {
+      super(props);
+      this.state = {
+        images: [],
+        loading: true,
+        error: null,
+        reference: '',
+        name: '',
+        description: '',
+        busy: false
+      };
+    }
+
+    componentDidMount() {
+      this.fetchImages();
+      // A pull is gigabytes and minutes, so the row appears first and the
+      // status catches up. Polling is what turns that into a live list.
+      this.poll = setInterval(() => {
+        if (this.state.images.some(image => image.status === 'pending')) {
+          this.fetchImages();
+        }
+      }, 4000);
+    }
+
+    componentWillUnmount() {
+      clearInterval(this.poll);
+    }
+
+    fetchImages = () => {
+      fetch('/images/api/pool', { credentials: 'same-origin' })
+        .then(response => response.ok ? response.json() : Promise.reject(new Error('Could not load the image pool')))
+        .then(images => this.setState({ images, loading: false, error: null }))
+        .catch(error => this.setState({ error: error.message, loading: false }));
+    };
+
+    addImage = (event) => {
+      event.preventDefault();
+      const { reference, name, description } = this.state;
+      this.setState({ busy: true, error: null });
+
+      fetch('/images/api/pool', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ reference, name: name || reference, description })
+      })
+        .then(response => response.json().then(body => ({ ok: response.ok, body })))
+        .then(({ ok, body }) => {
+          if (!ok) throw new Error(body.error || 'Could not add that image');
+          this.setState({ reference: '', name: '', description: '', busy: false });
+          this.fetchImages();
+        })
+        .catch(error => this.setState({ error: error.message, busy: false }));
+    };
+
+    setDefault = (imageId) => {
+      fetch('/images/api/pool/' + imageId + '/default', { method: 'POST', credentials: 'same-origin' })
+        .then(response => response.json().then(body => ({ ok: response.ok, body })))
+        .then(({ ok, body }) => {
+          if (!ok) throw new Error(body.error || 'Could not set the default');
+          this.fetchImages();
+        })
+        .catch(error => this.setState({ error: error.message }));
+    };
+
+    setTeamDefault = (imageId) => {
+      fetch('/images/api/team/' + this.teamId() + '/default', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ imageId })
+      })
+        .then(response => response.json().then(body => ({ ok: response.ok, body })))
+        .then(({ ok, body }) => {
+          if (!ok) throw new Error(body.error || 'Could not set the team default');
+          this.fetchImages();
+        })
+        .catch(error => this.setState({ error: error.message }));
+    };
+
+    removeImage = (image) => {
+      // A committed image exists only on this appliance, so the confirmation
+      // says so rather than asking the same question for both cases.
+      const permanent = image.source === 'commit';
+      const question = permanent
+        ? 'This image was built here and exists nowhere else. Deleting it is permanent. Continue?'
+        : 'Remove ' + image.reference + ' from the pool?';
+
+      if (!window.confirm(question)) return;
+
+      fetch('/images/api/pool/' + image.id, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ force: permanent })
+      })
+        .then(response => response.json().then(body => ({ ok: response.ok, body })))
+        .then(({ ok, body }) => {
+          if (!ok) throw new Error(body.error || 'Could not remove that image');
+          this.fetchImages();
+        })
+        .catch(error => this.setState({ error: error.message }));
+    };
+
+    render() {
+      const { images, loading, error, reference, name, description, busy } = this.state;
+
+      if (loading) return <p>Loading images...</p>;
+
+      return (
+        <div>
+          {error && <div className="image-warning"><strong>Problem:</strong> {error}</div>}
+
+          {this.isAdmin() && (
+            <div className="image-warning">
+              <strong>Adding an image runs someone else's code on this appliance.</strong>{' '}
+              A reference is pulled and then launched as a desktop. Only add images you
+              trust as much as you trust this server.
+            </div>
+          )}
+
+          {this.isAdmin() && (
+            <form className="image-form" onSubmit={this.addImage}>
+              <h5>Add an image</h5>
+              <div className="form-group">
+                <label htmlFor="reference">Registry reference</label>
+                <input id="reference" className="form-control" required
+                  placeholder="ghcr.io/darrendignam/opf-cloud-viper:2.0.0-alpha"
+                  value={reference}
+                  onChange={(e) => this.setState({ reference: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label htmlFor="name">Display name</label>
+                <input id="name" className="form-control" placeholder="Defaults to the reference"
+                  value={name}
+                  onChange={(e) => this.setState({ name: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label htmlFor="description">Description</label>
+                <textarea id="description" className="form-control" rows="2"
+                  value={description}
+                  onChange={(e) => this.setState({ description: e.target.value })} />
+              </div>
+              <button className="btn btn-primary" type="submit" disabled={busy}>
+                {busy ? 'Starting pull...' : 'Add and pull'}
+              </button>
+            </form>
+          )}
+
+          <h5>Pool ({images.length})</h5>
+          {images.length === 0 && <p className="text-muted">No images yet. Instances use the configured default.</p>}
+
+          {images.map(image => (
+            <div key={image.id} className={'image-card' + (image.isGlobalDefault ? ' is-default' : '')}>
+              <div className="d-flex justify-content-between align-items-start">
+                <div>
+                  <strong>{image.name}</strong>
+                  {image.isGlobalDefault && <span className="ml-2 badge badge-secondary">System default</span>}
+                  {image.source === 'commit' && <span className="ml-2 badge badge-info">Built here</span>}
+                  <div className="image-ref">{image.reference}</div>
+                  {image.description && <p className="mb-1 mt-1">{image.description}</p>}
+                  <small className="text-muted">{this.formatSize(image.sizeBytes)}</small>
+                </div>
+                <span className={'image-status status-' + image.status}>{image.status}</span>
+              </div>
+
+              {image.status === 'failed' && image.statusMessage && (
+                <p className="mt-2 mb-0"><small className="text-danger">{image.statusMessage}</small></p>
+              )}
+
+              <div className="mt-2">
+                {this.isAdmin() && image.status === 'available' && !image.isGlobalDefault && (
+                  <button className="btn btn-sm btn-outline-primary mr-2"
+                    onClick={() => this.setDefault(image.id)}>Make system default</button>
+                )}
+                {this.teamId() && image.status === 'available' && (
+                  <button className="btn btn-sm btn-outline-secondary mr-2"
+                    onClick={() => this.setTeamDefault(image.id)}>Use for my team</button>
+                )}
+                {this.isAdmin() && (
+                  <button className="btn btn-sm btn-outline-danger"
+                    onClick={() => this.removeImage(image)}>Remove</button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+  }

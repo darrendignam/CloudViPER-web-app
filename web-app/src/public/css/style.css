@@ -1508,3 +1508,43 @@ input.form-control:focus {
     border: var(--outline-width) solid var(--outline);
     box-shadow: none;
 }
+
+/* Container image pool (2.1).
+   Lives here rather than in the page, because the same component renders both
+   as a standalone page and as a tab inside the admin dashboard, and a tab that
+   carried its own styles would only be styled on one of them. */
+  .image-card {
+    border: 1px solid var(--opf-blue, #137DA4);
+    border-radius: var(--radius-chrome, 0);
+    padding: 1rem;
+    margin-bottom: 0.75rem;
+    background: #fff;
+  }
+  .image-card.is-default {
+    border-left: 6px solid var(--opf-pink, #C73079);
+  }
+  .image-ref {
+    font-family: monospace;
+    font-size: 0.85rem;
+    color: #555555;
+    word-break: break-all;
+  }
+  .image-status {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.15rem 0.5rem;
+    border: 1px solid currentColor;
+    border-radius: var(--radius-chrome, 0);
+  }
+  .status-available { color: #0D8663; }
+  .status-pending   { color: #555555; }
+  .status-failed    { color: #b3202c; }
+  .image-warning {
+    border: 1px solid #b3202c;
+    border-left: 6px solid #b3202c;
+    padding: 0.75rem;
+    margin-bottom: 1rem;
+    background: #fff;
+  }
+  .image-form { border: 1px solid #dee2e6; padding: 1rem; margin-bottom: 1.5rem; }
