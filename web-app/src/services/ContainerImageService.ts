@@ -62,6 +62,9 @@ export interface ResolvedImage {
     imageId: number | null;
     /** Which rung of the chain answered, for the log and for support. */
     origin: 'explicit' | 'team' | 'global' | 'environment';
+    /** Extra environment and mounts configured on the pool entry, if any. */
+    envVars: Record<string, string>;
+    volumes: Array<{ hostPath: string; containerPath: string; readOnly: boolean }>;
 }
 
 export class ContainerImageService {
@@ -79,20 +82,22 @@ export class ContainerImageService {
     async resolveImageForUser(user: ServiceUser, requestedImageId?: number | null): Promise<ResolvedImage> {
         if (requestedImageId) {
             const chosen = await this.requireLaunchableImage(requestedImageId, user);
-            return { reference: chosen.reference, imageId: chosen.id!, origin: 'explicit' };
+            return { reference: chosen.reference, imageId: chosen.id!, origin: 'explicit', envVars: chosen.envVars || {}, volumes: chosen.volumes || [] };
         }
 
         const teamDefault = await this.teamDefaultImage(user);
         if (teamDefault) {
-            return { reference: teamDefault.reference, imageId: teamDefault.id!, origin: 'team' };
+            return { reference: teamDefault.reference, imageId: teamDefault.id!, origin: 'team', envVars: teamDefault.envVars || {}, volumes: teamDefault.volumes || [] };
         }
 
         const globalDefault = await this.globalDefaultImage();
         if (globalDefault) {
-            return { reference: globalDefault.reference, imageId: globalDefault.id!, origin: 'global' };
+            return { reference: globalDefault.reference, imageId: globalDefault.id!, origin: 'global', envVars: globalDefault.envVars || {}, volumes: globalDefault.volumes || [] };
         }
 
-        return { reference: FALLBACK_VIPER_IMAGE, imageId: null, origin: 'environment' };
+        // The environment fallback is not a pool entry, so there is nothing
+        // configured against it.
+        return { reference: FALLBACK_VIPER_IMAGE, imageId: null, origin: 'environment', envVars: {}, volumes: [] };
     }
 
     /**

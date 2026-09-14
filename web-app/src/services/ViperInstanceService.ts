@@ -11,6 +11,7 @@ import { readAndProcessScript, validateRequiredScripts } from '../utility/script
 import containerService from './ContainerService';
 import selkiesControlPlane, { SelkiesRole, SELKIES_CONTROL_PORT } from './SelkiesControlPlane';
 import containerImageService from './ContainerImageService';
+import { validateEnvVars, validateVolumes, toDockerBinds, toDockerEnv } from './InstanceCustomisation';
 
 
 const DOMAIN_NAME = process.env.DOMAIN_NAME || 'cloudviper.org';
@@ -145,11 +146,20 @@ class ViperInstanceService {
 
     const image = await containerImageService.resolveImageForUser(user, requestedImageId);
 
+    // Re-validated at launch rather than trusted from the row. What was legal
+    // when it was saved may not be now: a directory can be deleted, replaced by
+    // a symlink, or moved outside the shared root, and the row would still hold
+    // the path that used to be fine.
+    const customEnv = validateEnvVars(image.envVars);
+    const customVolumes = validateVolumes(image.volumes);
+
     appLogger.info('Starting instance creation', {
       eventType: 'Instance Creation Started',
       image: image.reference,
       imageOrigin: image.origin,
       buildMode,
+      extraEnvVars: Object.keys(customEnv),
+      extraVolumes: customVolumes.map((mount) => `${mount.hostPath} -> ${mount.containerPath}`),
       userId: user.id,
       userEmail: user.email,
       userRole: user.role,
@@ -166,6 +176,11 @@ class ViperInstanceService {
       "TITLE=ViPER",
       "PUID=1000",
       "PGID=1000",
+      // Image extras last only in the sense of being appended; the reserved
+      // names above can never appear here, because validateEnvVars refuses
+      // them outright rather than letting a later entry win a race with
+      // whatever Docker does about duplicates.
+      ...toDockerEnv(customEnv),
     ];
     
     appLogger.info('Container environment prepared', {
@@ -194,7 +209,10 @@ class ViperInstanceService {
         name: containerName,
         HostConfig: {
           ShmSize: 1024 * 1024 * 1024,
-          Binds: [`${TEST_CORPUS_HOST_PATH}:/config/test-corpus:ro`],
+          Binds: [
+            `${TEST_CORPUS_HOST_PATH}:/config/test-corpus:ro`,
+            ...toDockerBinds(customVolumes)
+          ],
           ...(isDev && { PortBindings: {
             '3000/tcp': [{ HostPort: `${webPort}` }],
             '3001/tcp': [], // Empty binding to prevent null value

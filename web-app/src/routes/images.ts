@@ -4,6 +4,12 @@ import db from '../models';
 import { appLogger } from '../config/logger';
 import { UserRole } from '../types/UserRole';
 import containerImageService, { mayChooseImage } from '../services/ContainerImageService';
+import {
+    validateEnvVars,
+    validateVolumes,
+    listShareableDirectories,
+    INSTANCE_VOLUME_ROOT
+} from '../services/InstanceCustomisation';
 
 const router = express.Router();
 
@@ -65,6 +71,8 @@ function imageToJson(image: any) {
         isGlobalDefault: Boolean(image.isGlobalDefault),
         builtFromInstanceId: image.builtFromInstanceId,
         metadata: image.metadata || {},
+        envVars: image.envVars || {},
+        volumes: image.volumes || [],
         createdAt: image.createdAt
     };
 }
@@ -335,6 +343,62 @@ router.delete('/api/host', async (req: Request, res: Response): Promise<void> =>
         });
 
         res.json({ success: true });
+    } catch (error) {
+        res.status(400).json({ error: (error as Error).message });
+    }
+});
+
+/**
+ * Directories the appliance has been given to share.
+ *
+ * The interface offers these rather than a free-text path box, because typing a
+ * path is how somebody mounts the database directory by accident. In a
+ * self-hosted deployment this is where a mounted network share appears: mount
+ * it on the host under the shared root and it shows up here.
+ */
+router.get('/api/shares', async (req: Request, res: Response): Promise<void> => {
+    if (!requireAdmin(req, res)) return;
+
+    res.json({ root: INSTANCE_VOLUME_ROOT, directories: listShareableDirectories() });
+});
+
+/**
+ * Configure the environment and mounts applied to every instance of one image.
+ *
+ * System admins only. Both halves are host access under a friendly name, so
+ * neither is a team-level decision.
+ */
+router.put('/api/pool/:imageId/customisation', async (req: Request, res: Response): Promise<void> => {
+    const user = requireAdmin(req, res);
+    if (!user) return;
+
+    try {
+        const image = await db.ContainerImage.findByPk(Number(req.params.imageId));
+
+        if (!image) {
+            res.status(404).json({ error: 'That image is not in the pool' });
+            return;
+        }
+
+        // Validated before it is stored and again at launch. Storing something
+        // invalid would turn a mistake here into a failure much later, at the
+        // moment somebody is trying to start a desktop.
+        const envVars = validateEnvVars(req.body?.envVars);
+        const volumes = validateVolumes(req.body?.volumes);
+
+        await image.update({ envVars, volumes });
+
+        appLogger.info('Image customisation updated', {
+            eventType: 'Image Customisation Updated',
+            imageId: image.id,
+            reference: image.reference,
+            envVarNames: Object.keys(envVars),
+            mounts: volumes.map((mount) => `${mount.hostPath} -> ${mount.containerPath}${mount.readOnly ? ' (ro)' : ' (rw)'}`),
+            userId: user.id,
+            timestamp: new Date().toISOString()
+        });
+
+        res.json(imageToJson(image));
     } catch (error) {
         res.status(400).json({ error: (error as Error).message });
     }

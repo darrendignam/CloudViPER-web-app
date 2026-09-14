@@ -95,7 +95,7 @@ describe('resolveImageForUser', () => {
     it('should fall back to the environment when nothing is configured', async () => {
         const resolved = await containerImageService.resolveImageForUser(MEMBER as any);
 
-        expect(resolved).toEqual({ reference: FALLBACK_VIPER_IMAGE, imageId: null, origin: 'environment' });
+        expect(resolved).toMatchObject({ reference: FALLBACK_VIPER_IMAGE, imageId: null, origin: 'environment' });
     });
 
     it('should prefer the global default over the environment', async () => {
@@ -105,7 +105,7 @@ describe('resolveImageForUser', () => {
 
         const resolved = await containerImageService.resolveImageForUser(MEMBER as any);
 
-        expect(resolved).toEqual({ reference: 'ghcr.io/example/global:1', imageId: 20, origin: 'global' });
+        expect(resolved).toMatchObject({ reference: 'ghcr.io/example/global:1', imageId: 20, origin: 'global' });
     });
 
     it('should prefer the team default over the global one', async () => {
@@ -116,7 +116,7 @@ describe('resolveImageForUser', () => {
 
         const resolved = await containerImageService.resolveImageForUser(MEMBER as any);
 
-        expect(resolved).toEqual({ reference: 'ghcr.io/example/team:1', imageId: 30, origin: 'team' });
+        expect(resolved).toMatchObject({ reference: 'ghcr.io/example/team:1', imageId: 30, origin: 'team' });
     });
 
     it('should ignore a team default that never finished pulling', async () => {
@@ -150,7 +150,7 @@ describe('resolveImageForUser', () => {
 
         const resolved = await containerImageService.resolveImageForUser(LEADER as any, 42);
 
-        expect(resolved).toEqual({ reference: 'ghcr.io/example/chosen:1', imageId: 42, origin: 'explicit' });
+        expect(resolved).toMatchObject({ reference: 'ghcr.io/example/chosen:1', imageId: 42, origin: 'explicit' });
     });
 
     it('should refuse an explicit choice from a role that cannot choose', async () => {
@@ -269,5 +269,38 @@ describe('launchableImages', () => {
         expect(mockDb.ContainerImage.findAll).toHaveBeenCalledWith(
             expect.objectContaining({ where: { status: ImageStatus.AVAILABLE } })
         );
+    });
+});
+
+describe('the resolved image carries its customisation', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockDb.ContainerImage.findOne.mockResolvedValue(null);
+        mockDb.ContainerImage.findByPk.mockResolvedValue(null);
+        mockDb.Team.findByPk.mockResolvedValue(null);
+    });
+
+    it('should pass the pool entry env and volumes through', async () => {
+        // createInstance needs these at launch, and re-validates them there
+        // rather than trusting what was stored.
+        const configured = image({
+            id: 20,
+            envVars: { JHOVE_HOME: '/opt/jhove' },
+            volumes: [{ hostPath: '/srv/shared/corpora', containerPath: '/config/corpora', readOnly: true }]
+        });
+        mockDb.ContainerImage.findOne.mockResolvedValue(configured);
+        mockDb.ContainerImage.findByPk.mockResolvedValue(configured);
+
+        const resolved = await containerImageService.resolveImageForUser(MEMBER as any);
+
+        expect(resolved.envVars).toEqual({ JHOVE_HOME: '/opt/jhove' });
+        expect(resolved.volumes).toHaveLength(1);
+    });
+
+    it('should give the environment fallback nothing, since it is not a pool entry', async () => {
+        const resolved = await containerImageService.resolveImageForUser(MEMBER as any);
+
+        expect(resolved.envVars).toEqual({});
+        expect(resolved.volumes).toEqual([]);
     });
 });

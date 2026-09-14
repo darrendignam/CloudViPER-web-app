@@ -47,6 +47,11 @@ interface ContainerImageAttributes {
     createdById?: number | null;
     builtFromInstanceId?: number | null;
     metadata?: Record<string, any> | null;
+    // Extra environment and mounts applied to every instance built from this
+    // image. Both are validated before they are stored, in InstanceCustomisation,
+    // because both are host access by another name.
+    envVars?: Record<string, string> | null;
+    volumes?: Array<{ hostPath: string; containerPath: string; readOnly: boolean }> | null;
     createdAt?: Date;
     updatedAt?: Date;
 }
@@ -66,6 +71,8 @@ export default (sequelize: Sequelize) => {
         public createdById?: number | null;
         public builtFromInstanceId?: number | null;
         public metadata?: Record<string, any> | null;
+        public envVars?: Record<string, string> | null;
+        public volumes?: Array<{ hostPath: string; containerPath: string; readOnly: boolean }> | null;
         public readonly createdAt!: Date;
         public readonly updatedAt!: Date;
 
@@ -138,6 +145,8 @@ export default (sequelize: Sequelize) => {
             createdById: { type: DataTypes.INTEGER, allowNull: true },
             builtFromInstanceId: { type: DataTypes.INTEGER, allowNull: true },
             metadata: { type: DataTypes.JSON, allowNull: true, defaultValue: {} },
+            envVars: { type: DataTypes.JSON, allowNull: true, defaultValue: {} },
+            volumes: { type: DataTypes.JSON, allowNull: true, defaultValue: [] },
             createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
             updatedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW }
         },

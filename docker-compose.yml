@@ -46,6 +46,14 @@ services:
       # Docker daemon. Instance containers never receive this themselves.
       - /var/run/docker.sock:/var/run/docker.sock
       - ./scripts:/usr/src/app/scripts
+      # Shared content offered to desktops. Read-only here because this process
+      # only ever reads it to check a path; the Docker daemon performs the
+      # actual mount into instances.
+      #
+      # Mounted at the same path inside and out, and that matters: this process
+      # resolves the path while the daemon acts on it, so if the two disagreed
+      # a check that passed here would mount something else there.
+      - ${INSTANCE_VOLUME_ROOT:-/mnt/cloudviper}:${INSTANCE_VOLUME_ROOT:-/mnt/cloudviper}:ro
     # Bounded so the app can never again be the process that starves the host.
     # Steady state is around 50MB; this is headroom, not a target.
     deploy:

@@ -28,7 +28,16 @@
         hostImages: [],
         hostLoading: false,
         hostError: null,
-        hostPage: 1
+        hostPage: 1,
+        // Per-image environment and mounts. Admin only, because both are host
+        // access under a friendly name.
+        editing: null,
+        shareRoot: '',
+        shares: [],
+        editEnv: [],
+        editVolumes: [],
+        editError: null,
+        editSaving: false
       };
     }
 
@@ -88,6 +97,72 @@
       })
         .then(() => this.fetchHostImages())
         .catch(error => this.setState({ hostError: error.message }));
+    };
+
+    openCustomise = (image) => {
+      this.setState({
+        editing: image,
+        editError: null,
+        editEnv: Object.entries(image.envVars || {}).map(([name, value]) => ({ name, value })),
+        editVolumes: (image.volumes || []).map(v => Object.assign({}, v))
+      });
+
+      fetchJson('/images/api/shares')
+        .then(payload => this.setState({ shares: payload.directories, shareRoot: payload.root }))
+        .catch(error => this.setState({ editError: error.message }));
+    };
+
+    closeCustomise = () => this.setState({ editing: null, editError: null });
+
+    addMount = (share) => {
+      if (!share) return;
+      const chosen = this.state.shares.find(s => s.hostPath === share);
+      if (!chosen) return;
+
+      this.setState(prev => ({
+        editVolumes: prev.editVolumes.concat({
+          hostPath: chosen.hostPath,
+          containerPath: chosen.suggestedContainerPath,
+          readOnly: true
+        })
+      }));
+    };
+
+    updateMount = (index, field, value) => {
+      this.setState(prev => ({
+        editVolumes: prev.editVolumes.map((mount, i) =>
+          i === index ? Object.assign({}, mount, { [field]: value }) : mount)
+      }));
+    };
+
+    removeMount = (index) => {
+      this.setState(prev => ({ editVolumes: prev.editVolumes.filter((_, i) => i !== index) }));
+    };
+
+    updateEnv = (index, field, value) => {
+      this.setState(prev => ({
+        editEnv: prev.editEnv.map((entry, i) =>
+          i === index ? Object.assign({}, entry, { [field]: value }) : entry)
+      }));
+    };
+
+    saveCustomisation = () => {
+      const { editing, editEnv, editVolumes } = this.state;
+      const envVars = {};
+      editEnv.forEach(entry => { if (entry.name.trim()) envVars[entry.name.trim()] = entry.value; });
+
+      this.setState({ editSaving: true, editError: null });
+
+      fetchJson('/images/api/pool/' + editing.id + '/customisation', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ envVars, volumes: editVolumes })
+      })
+        .then(() => {
+          this.setState({ editing: null, editSaving: false });
+          this.fetchImages();
+        })
+        .catch(error => this.setState({ editError: error.message, editSaving: false }));
     };
 
     fetchImages = () => {
@@ -168,7 +243,8 @@
 
     render() {
       const { images, loading, error, reference, name, description, busy,
-              hostOpen, hostImages, hostLoading, hostError, hostPage } = this.state;
+              hostOpen, hostImages, hostLoading, hostError, hostPage,
+              editing, shares, shareRoot, editEnv, editVolumes, editError, editSaving } = this.state;
       const hostView = paginate(hostImages, hostPage, 15);
 
       if (loading) return <p>Loading images...</p>;
@@ -226,6 +302,22 @@
                   <div className="image-ref">{image.reference}</div>
                   {image.description && <p className="mb-1 mt-1">{image.description}</p>}
                   <small className="text-muted">{this.formatSize(image.sizeBytes)}</small>
+                  {(image.volumes || []).length > 0 && (
+                    <div className="image-extras">
+                      {image.volumes.map(mount => (
+                        <span key={mount.containerPath} className="image-extra">
+                          {mount.containerPath}{mount.readOnly ? ' (read only)' : ' (writable)'}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {Object.keys(image.envVars || {}).length > 0 && (
+                    <div className="image-extras">
+                      {Object.keys(image.envVars).map(key => (
+                        <span key={key} className="image-extra">{key}</span>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <span className={'image-status status-' + image.status}>{image.status}</span>
               </div>
@@ -243,6 +335,10 @@
                   <button className="btn btn-sm btn-outline-secondary mr-2"
                     onClick={() => this.setTeamDefault(image.id)}>Use for my team</button>
                 )}
+                {this.isAdmin() && image.status === 'available' && (
+                  <button className="btn btn-sm btn-outline-secondary mr-2"
+                    onClick={() => this.openCustomise(image)}>Files and settings</button>
+                )}
                 {this.isAdmin() && (
                   <button className="btn btn-sm btn-outline-danger"
                     onClick={() => this.removeImage(image)}>Remove</button>
@@ -250,6 +346,123 @@
               </div>
             </div>
           ))}
+
+          {editing && (
+            <div className="instance-details-overlay" onClick={this.closeCustomise}>
+              <div className="instance-details-modal" onClick={(e) => e.stopPropagation()}>
+                <div className="modal-header">
+                  <h3>Files and settings: {editing.name}</h3>
+                  <button className="btn btn-sm btn-secondary" onClick={this.closeCustomise}>Close</button>
+                </div>
+
+                <div className="modal-body">
+                  <p className="text-muted">
+                    Applied to every desktop launched from this image. Existing desktops
+                    are unaffected; changes take effect on the next launch.
+                  </p>
+
+                  <h5>Shared files</h5>
+                  <p className="text-muted small">
+                    Offered from <code>{shareRoot}</code> on the server. Mount a network
+                    share there on the host and it appears in this list, without anything
+                    being copied or built into the image.
+                  </p>
+
+                  {shares.length === 0 ? (
+                    <p className="text-muted">
+                      Nothing has been placed in <code>{shareRoot}</code> yet.
+                    </p>
+                  ) : (
+                    <select className="form-control form-control-sm mb-2"
+                      value=""
+                      onChange={(e) => this.addMount(e.target.value)}>
+                      <option value="">Add a shared folder...</option>
+                      {shares.map(share => (
+                        <option key={share.hostPath} value={share.hostPath}>
+                          {share.name}{share.entryCount !== null ? ' (' + share.entryCount + ' items)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  {editVolumes.length > 0 && (
+                    <table className="table table-sm">
+                      <thead>
+                        <tr><th>On the server</th><th>Inside the desktop</th><th>Access</th><th></th></tr>
+                      </thead>
+                      <tbody>
+                        {editVolumes.map((mount, index) => (
+                          <tr key={index}>
+                            <td className="image-ref">{mount.hostPath}</td>
+                            <td>
+                              <input className="form-control form-control-sm"
+                                value={mount.containerPath}
+                                onChange={(e) => this.updateMount(index, 'containerPath', e.target.value)} />
+                            </td>
+                            <td>
+                              <select className="form-control form-control-sm"
+                                value={mount.readOnly ? 'ro' : 'rw'}
+                                onChange={(e) => this.updateMount(index, 'readOnly', e.target.value === 'ro')}>
+                                <option value="ro">Read only</option>
+                                <option value="rw">Writable</option>
+                              </select>
+                            </td>
+                            <td>
+                              <button className="btn btn-sm btn-outline-danger"
+                                onClick={() => this.removeMount(index)}>Remove</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+
+                  {editVolumes.some(mount => !mount.readOnly) && (
+                    <div className="image-warning">
+                      A writable share is shared by every desktop launched from this image.
+                      One user changing a file changes it for everyone, and nothing here
+                      records who did.
+                    </div>
+                  )}
+
+                  <h5 className="mt-4">Environment variables</h5>
+                  <p className="text-muted small">
+                    Anything the platform sets for itself is refused, so a variable cannot
+                    be used to reach into another desktop.
+                  </p>
+
+                  {editEnv.map((entry, index) => (
+                    <div className="env-row" key={index}>
+                      <input className="form-control form-control-sm" placeholder="NAME"
+                        value={entry.name}
+                        onChange={(e) => this.updateEnv(index, 'name', e.target.value)} />
+                      <input className="form-control form-control-sm" placeholder="value"
+                        value={entry.value}
+                        onChange={(e) => this.updateEnv(index, 'value', e.target.value)} />
+                      <button className="btn btn-sm btn-outline-danger"
+                        onClick={() => this.setState(prev => ({ editEnv: prev.editEnv.filter((_, i) => i !== index) }))}>
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+
+                  <button className="btn btn-sm btn-outline-secondary mt-2"
+                    onClick={() => this.setState(prev => ({ editEnv: prev.editEnv.concat({ name: '', value: '' }) }))}>
+                    Add a variable
+                  </button>
+
+                  {editError && <div className="image-warning mt-3">{editError}</div>}
+                </div>
+
+                <div className="modal-footer">
+                  <button className="btn btn-secondary" onClick={this.closeCustomise} disabled={editSaving}>Cancel</button>
+                  <button className="btn btn-primary" onClick={this.saveCustomisation} disabled={editSaving}>
+                    {editSaving ? 'Saving...' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {this.isAdmin() && (
             <div className="host-images">
