@@ -1795,3 +1795,25 @@ input.form-control:focus {
   margin: 0 0.3rem 0.2rem 0;
   color: #555555;
 }
+
+/* Per-image resource ceilings (2.1) */
+.image-extra.image-limit {
+  border-style: dashed;
+}
+.limit-row {
+  display: grid;
+  grid-template-columns: 8rem 9rem 1fr;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+.limit-label {
+  margin-bottom: 0;
+  font-size: 0.85rem;
+}
+@media (max-width: 576px) {
+  .limit-row {
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+  }
+}

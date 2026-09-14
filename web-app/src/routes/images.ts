@@ -7,8 +7,11 @@ import containerImageService, { mayChooseImage } from '../services/ContainerImag
 import {
     validateEnvVars,
     validateVolumes,
+    validateResourceLimits,
     listShareableDirectories,
-    INSTANCE_VOLUME_ROOT
+    INSTANCE_VOLUME_ROOT,
+    DEFAULT_RESOURCE_LIMITS,
+    RESOURCE_LIMIT_BOUNDS
 } from '../services/InstanceCustomisation';
 
 const router = express.Router();
@@ -58,6 +61,11 @@ function requireImageChooser(req: Request, res: Response): ImageUser | null {
 }
 
 /** Rows reach the browser without the internals nobody outside needs. */
+/** A field left empty means "track the appliance default", which is null, not 0. */
+function blankToNull(raw: unknown): number | null {
+    return raw === null || raw === undefined || raw === '' ? null : Number(raw);
+}
+
 function imageToJson(image: any) {
     return {
         id: image.id,
@@ -73,6 +81,11 @@ function imageToJson(image: any) {
         metadata: image.metadata || {},
         envVars: image.envVars || {},
         volumes: image.volumes || [],
+        // Null is meaningful here and must survive the round trip: it is how the
+        // interface shows "using the appliance default" rather than a number
+        // somebody chose.
+        cpuLimit: image.cpuLimit ?? null,
+        memoryLimitMb: image.memoryLimitMb ?? null,
         createdAt: image.createdAt
     };
 }
@@ -363,10 +376,21 @@ router.get('/api/shares', async (req: Request, res: Response): Promise<void> => 
 });
 
 /**
- * Configure the environment and mounts applied to every instance of one image.
+ * The appliance defaults and the range around them, so the interface can say
+ * what an empty field will actually do rather than leaving it blank and silent.
+ */
+router.get('/api/limits', async (req: Request, res: Response): Promise<void> => {
+    if (!requireAdmin(req, res)) return;
+
+    res.json({ defaults: DEFAULT_RESOURCE_LIMITS, bounds: RESOURCE_LIMIT_BOUNDS });
+});
+
+/**
+ * Configure the environment, mounts and resource ceilings applied to every
+ * instance of one image.
  *
- * System admins only. Both halves are host access under a friendly name, so
- * neither is a team-level decision.
+ * System admins only. All of it is host access under a friendly name, so none
+ * of it is a team-level decision.
  */
 router.put('/api/pool/:imageId/customisation', async (req: Request, res: Response): Promise<void> => {
     const user = requireAdmin(req, res);
@@ -386,7 +410,18 @@ router.put('/api/pool/:imageId/customisation', async (req: Request, res: Respons
         const envVars = validateEnvVars(req.body?.envVars);
         const volumes = validateVolumes(req.body?.volumes);
 
-        await image.update({ envVars, volumes });
+        // Checked against the bounds whichever way it arrives, but stored as
+        // given: a blank field stays null so the image keeps tracking the
+        // appliance default rather than freezing today's value into the row.
+        validateResourceLimits({
+            cpuLimit: req.body?.cpuLimit,
+            memoryLimitMb: req.body?.memoryLimitMb
+        });
+
+        const cpuLimit = blankToNull(req.body?.cpuLimit);
+        const memoryLimitMb = blankToNull(req.body?.memoryLimitMb);
+
+        await image.update({ envVars, volumes, cpuLimit, memoryLimitMb });
 
         appLogger.info('Image customisation updated', {
             eventType: 'Image Customisation Updated',
@@ -394,6 +429,8 @@ router.put('/api/pool/:imageId/customisation', async (req: Request, res: Respons
             reference: image.reference,
             envVarNames: Object.keys(envVars),
             mounts: volumes.map((mount) => `${mount.hostPath} -> ${mount.containerPath}${mount.readOnly ? ' (ro)' : ' (rw)'}`),
+            cpuLimit,
+            memoryLimitMb,
             userId: user.id,
             timestamp: new Date().toISOString()
         });

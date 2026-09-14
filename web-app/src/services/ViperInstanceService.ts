@@ -11,7 +11,7 @@ import { readAndProcessScript, validateRequiredScripts } from '../utility/script
 import containerService from './ContainerService';
 import selkiesControlPlane, { SelkiesRole, SELKIES_CONTROL_PORT } from './SelkiesControlPlane';
 import containerImageService from './ContainerImageService';
-import { validateEnvVars, validateVolumes, toDockerBinds, toDockerEnv } from './InstanceCustomisation';
+import { validateEnvVars, validateVolumes, validateResourceLimits, toDockerBinds, toDockerEnv, toDockerResources } from './InstanceCustomisation';
 
 
 const DOMAIN_NAME = process.env.DOMAIN_NAME || 'cloudviper.org';
@@ -149,6 +149,10 @@ class ViperInstanceService {
     // the path that used to be fine.
     const customEnv = validateEnvVars(image.envVars);
     const customVolumes = validateVolumes(image.volumes);
+    const resourceLimits = validateResourceLimits({
+        cpuLimit: image.cpuLimit,
+        memoryLimitMb: image.memoryLimitMb
+    });
 
     appLogger.info('Starting instance creation', {
       eventType: 'Instance Creation Started',
@@ -157,6 +161,8 @@ class ViperInstanceService {
       buildMode,
       extraEnvVars: Object.keys(customEnv),
       extraVolumes: customVolumes.map((mount) => `${mount.hostPath} -> ${mount.containerPath}`),
+      cpuLimit: resourceLimits.cpuLimit,
+      memoryLimitMb: resourceLimits.memoryLimitMb,
       userId: user.id,
       userEmail: user.email,
       userRole: user.role,
@@ -206,6 +212,9 @@ class ViperInstanceService {
         name: containerName,
         HostConfig: {
           ShmSize: 1024 * 1024 * 1024,
+          // Without these one desktop can exhaust the host and end every other
+          // desktop on it. The ceiling is what keeps a bad job to one person.
+          ...toDockerResources(resourceLimits),
           // Shared folders come from the image's configuration now. The old
           // hardcoded corpus bind was v1's version of this feature: a fixed
           // path that on this appliance was empty, giving every desktop an icon

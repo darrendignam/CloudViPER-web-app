@@ -21,7 +21,11 @@ import {
     validateVolumes,
     isReservedEnvName,
     toDockerBinds,
-    toDockerEnv
+    toDockerEnv,
+    validateResourceLimits,
+    toDockerResources,
+    DEFAULT_RESOURCE_LIMITS,
+    RESOURCE_LIMIT_BOUNDS
 } from '../../../services/InstanceCustomisation';
 
 // A shared corpus, a secret beside it, and a secret above it: the shape of the
@@ -263,5 +267,156 @@ describe('listShareableDirectories', () => {
             process.env.INSTANCE_VOLUME_ROOT = original;
             jest.resetModules();
         }
+    });
+});
+
+describe('resource limits', () => {
+    it('should fall back to the appliance default when nothing is set', () => {
+        // An image configured before limits existed has null on both, and must
+        // still launch with a ceiling rather than with none.
+        expect(validateResourceLimits(null)).toEqual(DEFAULT_RESOURCE_LIMITS);
+        expect(validateResourceLimits({})).toEqual(DEFAULT_RESOURCE_LIMITS);
+        expect(validateResourceLimits({ cpuLimit: null, memoryLimitMb: null })).toEqual(DEFAULT_RESOURCE_LIMITS);
+    });
+
+    it('should default each side independently', () => {
+        const limits = validateResourceLimits({ memoryLimitMb: 4096 });
+
+        expect(limits.memoryLimitMb).toBe(4096);
+        expect(limits.cpuLimit).toBe(DEFAULT_RESOURCE_LIMITS.cpuLimit);
+    });
+
+    it('should treat an empty string as unset, which is what a blank form field sends', () => {
+        expect(validateResourceLimits({ cpuLimit: '', memoryLimitMb: '' })).toEqual(DEFAULT_RESOURCE_LIMITS);
+    });
+
+    it('should accept numbers arriving as strings from the form', () => {
+        expect(validateResourceLimits({ cpuLimit: '2.5', memoryLimitMb: '3072' }))
+            .toEqual({ cpuLimit: 2.5, memoryLimitMb: 3072 });
+    });
+
+    it('should accept a fractional core', () => {
+        expect(validateResourceLimits({ cpuLimit: 0.5 }).cpuLimit).toBe(0.5);
+    });
+
+    it('should refuse a memory limit too small to boot a desktop', () => {
+        // Launching something that instantly OOMs is worse than refusing it
+        // here, because the failure surfaces far from its cause.
+        expect(() => validateResourceLimits({ memoryLimitMb: 128 }))
+            .toThrow(/at least .* MB/);
+    });
+
+    it('should refuse limits beyond what the appliance has', () => {
+        expect(() => validateResourceLimits({ memoryLimitMb: RESOURCE_LIMIT_BOUNDS.maxMemoryLimitMb + 1 }))
+            .toThrow(/cannot be more than/);
+        expect(() => validateResourceLimits({ cpuLimit: RESOURCE_LIMIT_BOUNDS.maxCpuLimit + 1 }))
+            .toThrow(/cannot be more than/);
+    });
+
+    it.each([0, -1, -2048])('should refuse %s as a memory limit', (value) => {
+        expect(() => validateResourceLimits({ memoryLimitMb: value })).toThrow(/at least/);
+    });
+
+    it('should refuse a fractional megabyte', () => {
+        expect(() => validateResourceLimits({ memoryLimitMb: 1024.5 })).toThrow(/whole number/);
+    });
+
+    it.each(['lots', NaN, Infinity, {}])('should refuse %s, which is not a number', (value) => {
+        expect(() => validateResourceLimits({ cpuLimit: value })).toThrow(/must be a number/);
+    });
+
+    function dockerResources(limits = { cpuLimit: 2, memoryLimitMb: 2048 }) {
+        return toDockerResources(limits) as Record<string, any>;
+    }
+
+    it('should render the HostConfig fields Docker expects', () => {
+        const docker = dockerResources();
+
+        expect(docker.Memory).toBe(2048 * 1024 * 1024);
+        expect(docker.NanoCpus).toBe(2e9);
+    });
+
+    it('should always set MemorySwap explicitly', () => {
+        // Docker reads an unset MemorySwap as twice Memory, which would double
+        // every ceiling here the moment the host gained a swap file.
+        expect(dockerResources().MemorySwap).toBeDefined();
+    });
+
+    it('should allow a grace zone into swap above the memory limit', () => {
+        // A desktop that is briefly slow is recoverable. One that is killed
+        // loses whatever the person was working on.
+        const docker = dockerResources();
+
+        expect(docker.MemorySwap).toBeGreaterThan(docker.Memory);
+    });
+
+    it('should make the memory limit hard when the grace is switched off', () => {
+        const original = process.env.INSTANCE_SWAP_GRACE_MB;
+        jest.resetModules();
+        process.env.INSTANCE_SWAP_GRACE_MB = '0';
+        try {
+            const fresh = require('../../../services/InstanceCustomisation');
+            const docker = fresh.toDockerResources({ cpuLimit: 2, memoryLimitMb: 2048 });
+
+            expect(docker.MemorySwap).toBe(docker.Memory);
+        } finally {
+            if (original === undefined) delete process.env.INSTANCE_SWAP_GRACE_MB;
+            else process.env.INSTANCE_SWAP_GRACE_MB = original;
+            jest.resetModules();
+        }
+    });
+
+    it('should set a soft limit below the hard one', () => {
+        const docker = dockerResources();
+
+        expect(docker.MemoryReservation).toBeLessThan(docker.Memory);
+        expect(docker.MemoryReservation).toBeGreaterThan(0);
+    });
+
+    it('should cap processes, because a fork bomb needs no memory', () => {
+        expect(dockerResources().PidsLimit).toBeGreaterThan(0);
+    });
+
+    it('should tilt the out-of-memory killer towards desktops', () => {
+        // If the host runs out anyway, something dies. This decides that it is
+        // one desktop rather than the database every user depends on.
+        expect(dockerResources().OomScoreAdj).toBeGreaterThan(0);
+    });
+
+    it('should weight desktops below the platform for CPU and disk', () => {
+        // Docker's defaults are 1024 and 500. Under contention the database and
+        // the proxy have to win, or a busy room becomes an outage.
+        const docker = dockerResources();
+
+        expect(docker.CpuShares).toBeLessThan(1024);
+        expect(docker.BlkioWeight).toBeLessThan(500);
+    });
+
+    it('should cap file handles and processes', () => {
+        const names = dockerResources().Ulimits.map((ulimit: any) => ulimit.Name);
+
+        expect(names).toEqual(expect.arrayContaining(['nofile', 'nproc']));
+    });
+
+    it('should hand out a fresh ulimit array each time', () => {
+        // Docker's client mutates what it is given. A shared array would leak
+        // one instance's changes into every instance launched afterwards.
+        const first = dockerResources().Ulimits;
+        const second = dockerResources().Ulimits;
+
+        expect(first).not.toBe(second);
+        expect(first[0]).not.toBe(second[0]);
+    });
+
+    it('should render a whole number of nanocpus for a fractional core', () => {
+        // Docker rejects a non-integer NanoCpus, and 0.7 cores is 7e8 exactly
+        // only if the arithmetic is rounded.
+        expect(Number.isInteger(dockerResources({ cpuLimit: 0.7, memoryLimitMb: 1024 }).NanoCpus)).toBe(true);
+    });
+
+    it('should keep the defaults inside their own bounds', () => {
+        // A misconfigured appliance default would refuse every image that left
+        // the field blank, which is most of them.
+        expect(() => validateResourceLimits(DEFAULT_RESOURCE_LIMITS)).not.toThrow();
     });
 });

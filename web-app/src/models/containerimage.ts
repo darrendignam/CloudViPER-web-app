@@ -52,6 +52,10 @@ interface ContainerImageAttributes {
     // because both are host access by another name.
     envVars?: Record<string, string> | null;
     volumes?: Array<{ hostPath: string; containerPath: string; readOnly: boolean }> | null;
+    // Null on either means "whatever the appliance defaults to", which is how an
+    // image configured before limits existed keeps launching.
+    cpuLimit?: number | null;
+    memoryLimitMb?: number | null;
     createdAt?: Date;
     updatedAt?: Date;
 }
@@ -73,6 +77,8 @@ export default (sequelize: Sequelize) => {
         public metadata?: Record<string, any> | null;
         public envVars?: Record<string, string> | null;
         public volumes?: Array<{ hostPath: string; containerPath: string; readOnly: boolean }> | null;
+        public cpuLimit?: number | null;
+        public memoryLimitMb?: number | null;
         public readonly createdAt!: Date;
         public readonly updatedAt!: Date;
 
@@ -147,6 +153,20 @@ export default (sequelize: Sequelize) => {
             metadata: { type: DataTypes.JSON, allowNull: true, defaultValue: {} },
             envVars: { type: DataTypes.JSON, allowNull: true, defaultValue: {} },
             volumes: { type: DataTypes.JSON, allowNull: true, defaultValue: [] },
+            // Fractional cores are meaningful to Docker, so this is not an
+            // integer. DECIMAL rather than FLOAT because 2.5 should round-trip
+            // as 2.5 and not as 2.4999998.
+            cpuLimit: {
+                type: DataTypes.DECIMAL(5, 2),
+                allowNull: true,
+                // Sequelize hands DECIMAL back as a string, which would reach
+                // Docker as NaN nanocpus.
+                get(this: any) {
+                    const raw = this.getDataValue('cpuLimit');
+                    return raw === null || raw === undefined ? null : Number(raw);
+                }
+            },
+            memoryLimitMb: { type: DataTypes.INTEGER, allowNull: true },
             createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
             updatedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW }
         },

@@ -65,6 +65,199 @@ const RESERVED_CONTAINER_PATHS = [
     '/defaults'
 ];
 
+/**
+ * What an instance may consume, and what it may not.
+ *
+ * An unlimited container is a shared appliance with one user able to end it for
+ * everybody: a desktop that exhausts the host's memory does not fail alone, it
+ * takes every other desktop with it. A ceiling turns that into one person's bad
+ * afternoon.
+ *
+ * The defaults are sized from measurement rather than taste. An idle ViPER
+ * desktop on this appliance holds about 1 GiB, so 2 GiB is roughly twice what
+ * one needs while still capping a runaway. Two cores on a sixteen core host is
+ * deliberate oversubscription, which is right for desktop work that is busy in
+ * short bursts and idle the rest of the time.
+ */
+const DEFAULT_MEMORY_LIMIT_MB = readPositiveNumber(process.env.INSTANCE_DEFAULT_MEMORY_MB, 2048);
+const DEFAULT_CPU_LIMIT = readPositiveNumber(process.env.INSTANCE_DEFAULT_CPUS, 2);
+
+/**
+ * Ceilings, so a typo cannot hand one desktop the whole machine, and floors,
+ * because a desktop given 128 MB does not start. Refusing at the point of
+ * configuration beats launching something that dies on boot and leaves somebody
+ * guessing why.
+ */
+const MAX_MEMORY_LIMIT_MB = readPositiveNumber(process.env.INSTANCE_MAX_MEMORY_MB, 32768);
+const MAX_CPU_LIMIT = readPositiveNumber(process.env.INSTANCE_MAX_CPUS, 16);
+const MIN_MEMORY_LIMIT_MB = 512;
+const MIN_CPU_LIMIT = 0.25;
+
+/**
+ * A fork bomb needs no memory to speak of, so a memory limit alone does not
+ * stop one. This is not configurable per image because no legitimate desktop
+ * comes near it.
+ */
+const INSTANCE_PIDS_LIMIT = 512;
+
+/**
+ * How far past its memory limit an instance may go into swap before the kernel
+ * kills it.
+ *
+ * A desktop that is briefly slow is recoverable. A desktop that is killed loses
+ * whatever the person was working on, so a grace zone is the kinder failure.
+ * Set to 0 to make the memory limit hard, with no swap at all.
+ *
+ * This works whether or not the host has swap: with none, the allowance simply
+ * never gets used.
+ */
+const INSTANCE_SWAP_GRACE_MB = readNonNegativeNumber(process.env.INSTANCE_SWAP_GRACE_MB, 1024);
+
+/**
+ * Relative weights, which only matter when the machine is contended.
+ *
+ * Both sit below the Docker default of 1024 for CPU and 500 for block I/O, so
+ * when a room full of desktops is competing with the database and the proxy,
+ * the platform wins. A slow desktop is a nuisance; a starved database is an
+ * outage for everybody.
+ */
+const INSTANCE_CPU_SHARES = 512;
+const INSTANCE_BLKIO_WEIGHT = 300;
+
+/**
+ * Tilt the kernel's out-of-memory killer towards desktops.
+ *
+ * If the host does run out despite every ceiling here, something is going to be
+ * killed. This makes that something a ViPER instance rather than MySQL, the
+ * proxy or the application, which would take every user down rather than one.
+ */
+const INSTANCE_OOM_SCORE_ADJ = 500;
+
+/**
+ * File handles and processes. A desktop opening a corpus needs a lot of the
+ * former and few of the latter, and the host default is unbounded enough that
+ * one runaway can exhaust the machine's global file table.
+ */
+const INSTANCE_ULIMITS = [
+    { Name: 'nofile', Soft: 4096, Hard: 8192 },
+    { Name: 'nproc', Soft: 2048, Hard: 4096 }
+];
+
+function readNonNegativeNumber(raw: string | undefined, fallback: number): number {
+    const value = Number(raw);
+    return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function readPositiveNumber(raw: string | undefined, fallback: number): number {
+    const value = Number(raw);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+export interface ResourceLimits {
+    /** Cores, so 2.5 is two and a half. */
+    cpuLimit: number;
+    memoryLimitMb: number;
+}
+
+export const DEFAULT_RESOURCE_LIMITS: ResourceLimits = {
+    cpuLimit: DEFAULT_CPU_LIMIT,
+    memoryLimitMb: DEFAULT_MEMORY_LIMIT_MB
+};
+
+export const RESOURCE_LIMIT_BOUNDS = {
+    minCpuLimit: MIN_CPU_LIMIT,
+    maxCpuLimit: MAX_CPU_LIMIT,
+    minMemoryLimitMb: MIN_MEMORY_LIMIT_MB,
+    maxMemoryLimitMb: MAX_MEMORY_LIMIT_MB
+};
+
+/**
+ * Check a pair of limits, filling in the appliance default for either side left
+ * unset. Null and undefined mean "whatever the appliance says", which is how an
+ * image configured before this existed keeps working.
+ */
+export function validateResourceLimits(limits: Partial<Record<keyof ResourceLimits, unknown>> | null | undefined): ResourceLimits {
+    const cpuLimit = resolveLimit(limits?.cpuLimit, DEFAULT_CPU_LIMIT, {
+        label: 'CPU limit',
+        unit: 'cores',
+        minimum: MIN_CPU_LIMIT,
+        maximum: MAX_CPU_LIMIT
+    });
+
+    const memoryLimitMb = resolveLimit(limits?.memoryLimitMb, DEFAULT_MEMORY_LIMIT_MB, {
+        label: 'Memory limit',
+        unit: 'MB',
+        minimum: MIN_MEMORY_LIMIT_MB,
+        maximum: MAX_MEMORY_LIMIT_MB,
+        wholeNumber: true
+    });
+
+    return { cpuLimit, memoryLimitMb };
+}
+
+function resolveLimit(
+    raw: unknown,
+    fallback: number,
+    rules: { label: string; unit: string; minimum: number; maximum: number; wholeNumber?: boolean }
+): number {
+    if (raw === null || raw === undefined || raw === '') {
+        return fallback;
+    }
+
+    const value = Number(raw);
+
+    if (!Number.isFinite(value)) {
+        throw new Error(`${rules.label} must be a number`);
+    }
+
+    if (rules.wholeNumber && !Number.isInteger(value)) {
+        throw new Error(`${rules.label} must be a whole number of ${rules.unit}`);
+    }
+
+    if (value < rules.minimum) {
+        throw new Error(`${rules.label} must be at least ${rules.minimum} ${rules.unit}. A desktop below that does not start`);
+    }
+
+    if (value > rules.maximum) {
+        throw new Error(`${rules.label} cannot be more than ${rules.maximum} ${rules.unit} on this appliance`);
+    }
+
+    return value;
+}
+
+/**
+ * Render limits into the HostConfig fields Docker expects.
+ *
+ * Every value here was confirmed against the daemon on the appliance rather
+ * than taken from documentation: Docker silently drops options the kernel will
+ * not honour, reporting them in Warnings, and these came back clean and were
+ * visible in the container's own cgroup files.
+ *
+ * MemorySwap is always set explicitly. Left unset Docker reads it as twice
+ * Memory, which would silently double every ceiling here the moment the host
+ * gained a swap file.
+ */
+export function toDockerResources(limits: ResourceLimits): Record<string, unknown> {
+    const memoryBytes = limits.memoryLimitMb * 1024 * 1024;
+    const swapGraceBytes = INSTANCE_SWAP_GRACE_MB * 1024 * 1024;
+
+    return {
+        Memory: memoryBytes,
+        // Docker reads this as memory plus swap combined, so the allowance is
+        // the difference. Equal to Memory means no swap at all.
+        MemorySwap: memoryBytes + swapGraceBytes,
+        // A soft limit the kernel reclaims against under pressure, so a desktop
+        // drifting over its share is squeezed before it is killed outright.
+        MemoryReservation: Math.floor(memoryBytes / 2),
+        NanoCpus: Math.round(limits.cpuLimit * 1e9),
+        CpuShares: INSTANCE_CPU_SHARES,
+        BlkioWeight: INSTANCE_BLKIO_WEIGHT,
+        PidsLimit: INSTANCE_PIDS_LIMIT,
+        OomScoreAdj: INSTANCE_OOM_SCORE_ADJ,
+        Ulimits: INSTANCE_ULIMITS.map((ulimit) => ({ ...ulimit }))
+    };
+}
+
 export interface VolumeMount {
     hostPath: string;
     containerPath: string;

@@ -98,6 +98,8 @@ function imageWith(overrides: Record<string, unknown> = {}) {
         origin: 'global',
         envVars: {},
         volumes: [],
+        cpuLimit: null,
+        memoryLimitMb: null,
         ...overrides
     };
 }
@@ -115,6 +117,10 @@ function bindsUsed(): string[] {
 
 function envUsed(): string[] {
     return mockContainerService.createContainer.mock.calls[0]?.[0]?.Env || [];
+}
+
+function hostConfigUsed(): Record<string, any> {
+    return mockContainerService.createContainer.mock.calls[0]?.[0]?.HostConfig || {};
 }
 
 afterAll(() => {
@@ -254,6 +260,67 @@ describe('what an instance is given', () => {
 
         await expect(viperInstanceService.createInstance(ADMIN as any))
             .rejects.toThrow(/cannot be overridden/);
+
+        expect(mockContainerService.createContainer).not.toHaveBeenCalled();
+    });
+
+    it('should always give an instance a memory and CPU ceiling', async () => {
+        // The state before this existed: an unlimited container, where one
+        // runaway job exhausts the host and ends every other desktop on it.
+        await viperInstanceService.createInstance(ADMIN as any);
+
+        const hostConfig = hostConfigUsed();
+
+        expect(hostConfig.Memory).toBeGreaterThan(0);
+        expect(hostConfig.NanoCpus).toBeGreaterThan(0);
+        expect(hostConfig.PidsLimit).toBeGreaterThan(0);
+        expect(hostConfig.OomScoreAdj).toBeGreaterThan(0);
+        expect(hostConfig.Ulimits.length).toBeGreaterThan(0);
+    });
+
+    it('should not let a resource limit overwrite the shared folders', async () => {
+        // Both are spread into the same HostConfig object. Ordering them wrong
+        // would silently drop every mount, which no test of either alone would
+        // notice.
+        mockResolveImageForUser.mockResolvedValue(imageWith({
+            volumes: [{ hostPath: CORPORA, containerPath: '/config/jhove-corpora', readOnly: true }],
+            cpuLimit: 4,
+            memoryLimitMb: 4096
+        }));
+
+        await viperInstanceService.createInstance(ADMIN as any);
+
+        expect(hostConfigUsed().Binds).toEqual([`${fs.realpathSync(CORPORA)}:/config/jhove-corpora:ro`]);
+        expect(hostConfigUsed().Memory).toBe(4096 * 1024 * 1024);
+    });
+
+    it('should use the limits the image configures', async () => {
+        mockResolveImageForUser.mockResolvedValue(imageWith({ cpuLimit: 4, memoryLimitMb: 8192 }));
+
+        await viperInstanceService.createInstance(ADMIN as any);
+
+        expect(hostConfigUsed().Memory).toBe(8192 * 1024 * 1024);
+        expect(hostConfigUsed().NanoCpus).toBe(4e9);
+    });
+
+    it('should fall back to the appliance default when the image sets none', async () => {
+        // Every image in the pool predates this feature, so the fallback is the
+        // path that actually runs today.
+        mockResolveImageForUser.mockResolvedValue(imageWith({ cpuLimit: null, memoryLimitMb: null }));
+
+        await viperInstanceService.createInstance(ADMIN as any);
+
+        const { cpuLimit, memoryLimitMb } = require('../../../services/InstanceCustomisation').DEFAULT_RESOURCE_LIMITS;
+
+        expect(hostConfigUsed().Memory).toBe(memoryLimitMb * 1024 * 1024);
+        expect(hostConfigUsed().NanoCpus).toBe(cpuLimit * 1e9);
+    });
+
+    it('should refuse to launch when an image asks for more than the appliance allows', async () => {
+        mockResolveImageForUser.mockResolvedValue(imageWith({ memoryLimitMb: 999999 }));
+
+        await expect(viperInstanceService.createInstance(ADMIN as any))
+            .rejects.toThrow(/cannot be more than/);
 
         expect(mockContainerService.createContainer).not.toHaveBeenCalled();
     });

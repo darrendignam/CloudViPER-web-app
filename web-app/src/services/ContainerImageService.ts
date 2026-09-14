@@ -65,6 +65,9 @@ export interface ResolvedImage {
     /** Extra environment and mounts configured on the pool entry, if any. */
     envVars: Record<string, string>;
     volumes: Array<{ hostPath: string; containerPath: string; readOnly: boolean }>;
+    /** Null means the appliance default applies, resolved at launch. */
+    cpuLimit: number | null;
+    memoryLimitMb: number | null;
 }
 
 export class ContainerImageService {
@@ -82,22 +85,22 @@ export class ContainerImageService {
     async resolveImageForUser(user: ServiceUser, requestedImageId?: number | null): Promise<ResolvedImage> {
         if (requestedImageId) {
             const chosen = await this.requireLaunchableImage(requestedImageId, user);
-            return { reference: chosen.reference, imageId: chosen.id!, origin: 'explicit', envVars: chosen.envVars || {}, volumes: chosen.volumes || [] };
+            return { reference: chosen.reference, imageId: chosen.id!, origin: 'explicit', envVars: chosen.envVars || {}, volumes: chosen.volumes || [], cpuLimit: chosen.cpuLimit ?? null, memoryLimitMb: chosen.memoryLimitMb ?? null };
         }
 
         const teamDefault = await this.teamDefaultImage(user);
         if (teamDefault) {
-            return { reference: teamDefault.reference, imageId: teamDefault.id!, origin: 'team', envVars: teamDefault.envVars || {}, volumes: teamDefault.volumes || [] };
+            return { reference: teamDefault.reference, imageId: teamDefault.id!, origin: 'team', envVars: teamDefault.envVars || {}, volumes: teamDefault.volumes || [], cpuLimit: teamDefault.cpuLimit ?? null, memoryLimitMb: teamDefault.memoryLimitMb ?? null };
         }
 
         const globalDefault = await this.globalDefaultImage();
         if (globalDefault) {
-            return { reference: globalDefault.reference, imageId: globalDefault.id!, origin: 'global', envVars: globalDefault.envVars || {}, volumes: globalDefault.volumes || [] };
+            return { reference: globalDefault.reference, imageId: globalDefault.id!, origin: 'global', envVars: globalDefault.envVars || {}, volumes: globalDefault.volumes || [], cpuLimit: globalDefault.cpuLimit ?? null, memoryLimitMb: globalDefault.memoryLimitMb ?? null };
         }
 
         // The environment fallback is not a pool entry, so there is nothing
         // configured against it.
-        return { reference: FALLBACK_VIPER_IMAGE, imageId: null, origin: 'environment', envVars: {}, volumes: [] };
+        return { reference: FALLBACK_VIPER_IMAGE, imageId: null, origin: 'environment', envVars: {}, volumes: [], cpuLimit: null, memoryLimitMb: null };
     }
 
     /**

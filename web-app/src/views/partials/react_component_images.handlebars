@@ -36,6 +36,10 @@
         shares: [],
         editEnv: [],
         editVolumes: [],
+        editCpuLimit: '',
+        editMemoryLimitMb: '',
+        limitDefaults: null,
+        limitBounds: null,
         editError: null,
         editSaving: false
       };
@@ -104,12 +108,18 @@
         editing: image,
         editError: null,
         editEnv: Object.entries(image.envVars || {}).map(([name, value]) => ({ name, value })),
-        editVolumes: (image.volumes || []).map(v => Object.assign({}, v))
+        editVolumes: (image.volumes || []).map(v => Object.assign({}, v)),
+        editCpuLimit: image.cpuLimit === null || image.cpuLimit === undefined ? '' : String(image.cpuLimit),
+        editMemoryLimitMb: image.memoryLimitMb === null || image.memoryLimitMb === undefined ? '' : String(image.memoryLimitMb)
       });
 
       fetchJson('/images/api/shares')
         .then(payload => this.setState({ shares: payload.directories, shareRoot: payload.root }))
         .catch(error => this.setState({ editError: error.message }));
+
+      fetchJson('/images/api/limits')
+        .then(payload => this.setState({ limitDefaults: payload.defaults, limitBounds: payload.bounds }))
+        .catch(() => { /* The fields still work, they just cannot name the default. */ });
     };
 
     closeCustomise = () => this.setState({ editing: null, editError: null });
@@ -147,7 +157,7 @@
     };
 
     saveCustomisation = () => {
-      const { editing, editEnv, editVolumes } = this.state;
+      const { editing, editEnv, editVolumes, editCpuLimit, editMemoryLimitMb } = this.state;
       const envVars = {};
       editEnv.forEach(entry => { if (entry.name.trim()) envVars[entry.name.trim()] = entry.value; });
 
@@ -156,7 +166,14 @@
       fetchJson('/images/api/pool/' + editing.id + '/customisation', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ envVars, volumes: editVolumes })
+        body: JSON.stringify({
+          envVars,
+          volumes: editVolumes,
+          // Empty means "track the appliance default", which the server stores
+          // as null rather than as today's number.
+          cpuLimit: editCpuLimit.trim() === '' ? null : editCpuLimit.trim(),
+          memoryLimitMb: editMemoryLimitMb.trim() === '' ? null : editMemoryLimitMb.trim()
+        })
       })
         .then(() => {
           this.setState({ editing: null, editSaving: false });
@@ -244,7 +261,8 @@
     render() {
       const { images, loading, error, reference, name, description, busy,
               hostOpen, hostImages, hostLoading, hostError, hostPage,
-              editing, shares, shareRoot, editEnv, editVolumes, editError, editSaving } = this.state;
+              editing, shares, shareRoot, editEnv, editVolumes, editError, editSaving,
+              editCpuLimit, editMemoryLimitMb, limitDefaults, limitBounds } = this.state;
       const hostView = paginate(hostImages, hostPage, 15);
 
       if (loading) return <p>Loading images...</p>;
@@ -302,6 +320,14 @@
                   <div className="image-ref">{image.reference}</div>
                   {image.description && <p className="mb-1 mt-1">{image.description}</p>}
                   <small className="text-muted">{this.formatSize(image.sizeBytes)}</small>
+                  <div className="image-extras">
+                    <span className="image-extra image-limit">
+                      {image.cpuLimit === null ? 'CPU: default' : 'CPU: ' + image.cpuLimit + ' cores'}
+                    </span>
+                    <span className="image-extra image-limit">
+                      {image.memoryLimitMb === null ? 'RAM: default' : 'RAM: ' + image.memoryLimitMb + ' MB'}
+                    </span>
+                  </div>
                   {(image.volumes || []).length > 0 && (
                     <div className="image-extras">
                       {image.volumes.map(mount => (
@@ -450,6 +476,42 @@
                     onClick={() => this.setState(prev => ({ editEnv: prev.editEnv.concat({ name: '', value: '' }) }))}>
                     Add a variable
                   </button>
+
+                  <h5 className="mt-4">Resource limits</h5>
+                  <p className="text-muted small">
+                    A ceiling for each desktop launched from this image. Without one, a
+                    single runaway job can exhaust the server and end every other desktop
+                    on it. Leave a field empty to follow the appliance default, so it
+                    tracks the setting rather than freezing today's number.
+                  </p>
+
+                  <div className="limit-row">
+                    <label className="limit-label" htmlFor="image-cpu-limit">CPU cores</label>
+                    <input className="form-control form-control-sm" id="image-cpu-limit"
+                      type="number" step="0.25"
+                      min={limitBounds ? limitBounds.minCpuLimit : undefined}
+                      max={limitBounds ? limitBounds.maxCpuLimit : undefined}
+                      placeholder={limitDefaults ? 'default: ' + limitDefaults.cpuLimit : 'appliance default'}
+                      value={editCpuLimit}
+                      onChange={(e) => this.setState({ editCpuLimit: e.target.value })} />
+                    <span className="text-muted small">
+                      {limitBounds ? limitBounds.minCpuLimit + ' to ' + limitBounds.maxCpuLimit + ' cores' : ''}
+                    </span>
+                  </div>
+
+                  <div className="limit-row">
+                    <label className="limit-label" htmlFor="image-memory-limit">Memory (MB)</label>
+                    <input className="form-control form-control-sm" id="image-memory-limit"
+                      type="number" step="256"
+                      min={limitBounds ? limitBounds.minMemoryLimitMb : undefined}
+                      max={limitBounds ? limitBounds.maxMemoryLimitMb : undefined}
+                      placeholder={limitDefaults ? 'default: ' + limitDefaults.memoryLimitMb : 'appliance default'}
+                      value={editMemoryLimitMb}
+                      onChange={(e) => this.setState({ editMemoryLimitMb: e.target.value })} />
+                    <span className="text-muted small">
+                      {limitBounds ? limitBounds.minMemoryLimitMb + ' to ' + limitBounds.maxMemoryLimitMb + ' MB' : ''}
+                    </span>
+                  </div>
 
                   {editError && <div className="image-warning mt-3">{editError}</div>}
                 </div>

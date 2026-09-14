@@ -38,7 +38,7 @@ jest.mock('../../../models', () => ({
 import db from '../../../models';
 
 const mockDb = db as unknown as {
-    ContainerImage: { findAll: jest.Mock };
+    ContainerImage: { findAll: jest.Mock; findByPk: jest.Mock };
     ViperInstance: { findOne: jest.Mock; findAll: jest.Mock };
 };
 
@@ -266,5 +266,113 @@ describe('image pool routes', () => {
             await request(buildApp(LEADER)).delete('/images/api/pool/7').expect(403);
             expect(mockService.removeImage).not.toHaveBeenCalled();
         });
+    });
+});
+
+describe('resource limits on an image', () => {
+    function poolImage(overrides: any = {}) {
+        return Object.assign({
+            id: 7,
+            reference: 'ghcr.io/x/viper:2.1',
+            name: 'Workshop',
+            source: 'registry',
+            status: 'available',
+            envVars: {},
+            volumes: [],
+            cpuLimit: null,
+            memoryLimitMb: null,
+            update: jest.fn().mockImplementation(async function (this: any, values: any) {
+                Object.assign(this, values);
+            })
+        }, overrides);
+    }
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+    });
+
+    it('should store the limits an admin sets', async () => {
+        const image = poolImage();
+        mockDb.ContainerImage.findByPk.mockResolvedValue(image);
+
+        await request(buildApp(ADMIN))
+            .put('/images/api/pool/7/customisation')
+            .send({ envVars: {}, volumes: [], cpuLimit: 4, memoryLimitMb: 8192 })
+            .expect(200);
+
+        expect(image.update).toHaveBeenCalledWith(
+            expect.objectContaining({ cpuLimit: 4, memoryLimitMb: 8192 })
+        );
+    });
+
+    it('should store a blank field as null so it keeps tracking the default', async () => {
+        // Freezing today's default into the row would silently detach the image
+        // from a later change to the appliance setting.
+        const image = poolImage({ cpuLimit: 4, memoryLimitMb: 8192 });
+        mockDb.ContainerImage.findByPk.mockResolvedValue(image);
+
+        await request(buildApp(ADMIN))
+            .put('/images/api/pool/7/customisation')
+            .send({ envVars: {}, volumes: [], cpuLimit: '', memoryLimitMb: '' })
+            .expect(200);
+
+        expect(image.update).toHaveBeenCalledWith(
+            expect.objectContaining({ cpuLimit: null, memoryLimitMb: null })
+        );
+    });
+
+    it('should refuse a limit beyond the appliance bounds', async () => {
+        const image = poolImage();
+        mockDb.ContainerImage.findByPk.mockResolvedValue(image);
+
+        const response = await request(buildApp(ADMIN))
+            .put('/images/api/pool/7/customisation')
+            .send({ envVars: {}, volumes: [], memoryLimitMb: 999999 })
+            .expect(400);
+
+        expect(response.body.error).toMatch(/cannot be more than/);
+        expect(image.update).not.toHaveBeenCalled();
+    });
+
+    it('should refuse a memory limit too small to boot a desktop', async () => {
+        const image = poolImage();
+        mockDb.ContainerImage.findByPk.mockResolvedValue(image);
+
+        await request(buildApp(ADMIN))
+            .put('/images/api/pool/7/customisation')
+            .send({ envVars: {}, volumes: [], memoryLimitMb: 64 })
+            .expect(400);
+
+        expect(image.update).not.toHaveBeenCalled();
+    });
+
+    it('should report the limits back, with null meaning the default', async () => {
+        const image = poolImage();
+        mockDb.ContainerImage.findByPk.mockResolvedValue(image);
+
+        const response = await request(buildApp(ADMIN))
+            .put('/images/api/pool/7/customisation')
+            .send({ envVars: {}, volumes: [] })
+            .expect(200);
+
+        expect(response.body).toEqual(expect.objectContaining({ cpuLimit: null, memoryLimitMb: null }));
+    });
+
+    it('should refuse a team admin, since a ceiling is a host decision', async () => {
+        await request(buildApp(TEAM_ADMIN))
+            .put('/images/api/pool/7/customisation')
+            .send({ cpuLimit: 16 })
+            .expect(403);
+    });
+
+    it('should tell an admin the defaults and the range', async () => {
+        const response = await request(buildApp(ADMIN)).get('/images/api/limits').expect(200);
+
+        expect(response.body.defaults.memoryLimitMb).toBeGreaterThan(0);
+        expect(response.body.bounds.maxMemoryLimitMb).toBeGreaterThan(response.body.bounds.minMemoryLimitMb);
+    });
+
+    it('should not tell a member the appliance limits', async () => {
+        await request(buildApp(MEMBER)).get('/images/api/limits').expect(403);
     });
 });
