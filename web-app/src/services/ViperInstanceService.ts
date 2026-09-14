@@ -55,9 +55,6 @@ function traefikRoutingLabels(containerName: string, instanceURL: string): Recor
   };
 }
 
-const TEST_CORPUS_HOST_PATH = process.env.TEST_CORPUS_HOST_PATH
-  || '/var/viper-docker-project/volumes/test-corpus/test-root/corpora';
-
 // Interface for the user type used in service routes
 export interface ServiceUser {
   id: number;
@@ -209,10 +206,11 @@ class ViperInstanceService {
         name: containerName,
         HostConfig: {
           ShmSize: 1024 * 1024 * 1024,
-          Binds: [
-            `${TEST_CORPUS_HOST_PATH}:/config/test-corpus:ro`,
-            ...toDockerBinds(customVolumes)
-          ],
+          // Shared folders come from the image's configuration now. The old
+          // hardcoded corpus bind was v1's version of this feature: a fixed
+          // path that on this appliance was empty, giving every desktop an icon
+          // that led nowhere.
+          Binds: toDockerBinds(customVolumes),
           ...(isDev && { PortBindings: {
             '3000/tcp': [{ HostPort: `${webPort}` }],
             '3001/tcp': [], // Empty binding to prevent null value
@@ -292,7 +290,7 @@ class ViperInstanceService {
 
       // Setup monitoring and security (non-critical - don't fail instance creation if these fail)
       try {
-        await this.setupContainerSecurityAndMonitoring(container, instanceUUID, statusKey, buildMode);
+        await this.setupContainerSecurityAndMonitoring(container, instanceUUID, statusKey, buildMode, customVolumes);
       } catch (monitoringError) {
         // Log monitoring setup failure but don't fail the instance creation
         appLogger.warn('Monitoring setup failed - instance created but monitoring may not work', {
@@ -474,7 +472,13 @@ class ViperInstanceService {
   /**
    * Setup security and monitoring for a container
    */
-  private async setupContainerSecurityAndMonitoring(container: any, instanceUUID: string, statusKey: string, buildMode = false): Promise<void> {
+  private async setupContainerSecurityAndMonitoring(
+    container: any,
+    instanceUUID: string,
+    statusKey: string,
+    buildMode = false,
+    volumes: Array<{ containerPath: string }> = []
+  ): Promise<void> {
     // Validate required scripts exist
     const scriptValidation = validateRequiredScripts();
     if (!scriptValidation.valid) {
@@ -500,8 +504,7 @@ class ViperInstanceService {
     // Setup monitoring scripts and service
     await this.setupMonitoringScripts(container, instanceUUID, statusKey);
     
-    // Create desktop shortcut for test corpus
-    await this.createTestCorpusShortcut(container, instanceUUID);
+    await this.createMountShortcuts(container, instanceUUID, volumes);
   }
 
   /**
@@ -687,36 +690,58 @@ class ViperInstanceService {
   }
 
   /**
-   * Creates a test corpus shortcut on the desktop
+   * Put a desktop icon on each shared folder given to this instance.
+   *
+   * Without one the files are present but unfound: they sit in the home
+   * directory, and somebody at a workshop will not think to go looking there.
    */
-  private async createTestCorpusShortcut(container: any, instanceUUID: string): Promise<void> {
+  private async createMountShortcuts(
+    container: any,
+    instanceUUID: string,
+    volumes: Array<{ containerPath: string }>
+  ): Promise<void> {
+    if (volumes.length === 0) {
+      return;
+    }
+
     try {
       // Both as abc. Creating the directory as root would leave it root owned
       // and the symlink step, which runs as abc, would fail on a fresh volume.
       await this.execChecked(container.id, ['mkdir', '-p', '/config/Desktop'], { User: 'abc' });
 
-      // A symlink rather than a .desktop launcher: Caja refuses to open a
-      // launcher it has not been told to trust, and that trust flag is per-user
-      // metadata which ViPER's own post-install sets before this code runs. A
-      // symlink opens on double click with no flag and accepts dropped files.
-      //
-      // Created as abc rather than created as root and chowned: chown -h on a
-      // symlink is silently a no-op here, which would leave it owned by root
-      // while ViPER's own desktop links are owned by abc.
-      await this.execChecked(container.id,
-        ['ln', '-sfn', '/config/test-corpus', '/config/Desktop/Test Corpus'],
-        { User: 'abc' }
-      );
+      for (const mount of volumes) {
+        // The name the administrator chose for the destination is the name on
+        // the desktop, so what someone sees matches what was configured.
+        const label = mount.containerPath.split('/').filter(Boolean).pop();
 
-      appLogger.info('Test corpus desktop shortcut created', {
+        if (!label) continue;
+
+        // A symlink rather than a .desktop launcher: Caja refuses to open a
+        // launcher it has not been told to trust, and that trust flag is
+        // per-user metadata which ViPER's own post-install sets before this code
+        // runs. A symlink opens on double click with no flag and accepts
+        // dropped files.
+        //
+        // Created as abc rather than created as root and chowned: chown -h on a
+        // symlink is silently a no-op here, which would leave it owned by root
+        // while ViPER's own desktop links are owned by abc.
+        await this.execChecked(container.id,
+          ['ln', '-sfn', mount.containerPath, `/config/Desktop/${label}`],
+          { User: 'abc' }
+        );
+      }
+
+      appLogger.info('Desktop shortcuts created for shared files', {
         eventType: 'Container Setup',
         instanceUUID,
         containerId: container.id,
-        action: 'desktop_shortcut_created',
+        shortcuts: volumes.map((mount) => mount.containerPath),
         timestamp: new Date().toISOString()
       });
     } catch (shortcutErr) {
-      appLogger.warn('Failed to create desktop shortcut', {
+      // Not fatal. The files are mounted and reachable from the home directory
+      // either way; only the icon is missing.
+      appLogger.warn('Failed to create desktop shortcuts', {
         eventType: 'Container Setup Warning',
         instanceUUID,
         containerId: container.id,

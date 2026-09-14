@@ -416,11 +416,11 @@ describe('commitInstanceToImage', () => {
     });
 
     it('should leave bind mounts alone when clearing /config', async () => {
-        // Every real instance has the shared test corpus bind-mounted read-only
-        // at /config/test-corpus. A plain recursive delete fails on it with
-        // "Device or resource busy" and takes the whole commit down, which is
-        // exactly what happened the first time this ran against a real desktop
-        // rather than a bare probe container.
+        // An image's shared folders are bind-mounted read-only under /config.
+        // A plain recursive delete fails on one with "Device or resource busy"
+        // and takes the whole commit down, which is exactly what happened the
+        // first time this ran against a real desktop rather than a bare probe
+        // container.
         await containerImageService.commitInstanceToImage(instance, { name: 'Forensics Build' });
 
         const reset = mockContainerService.execInContainer.mock.calls

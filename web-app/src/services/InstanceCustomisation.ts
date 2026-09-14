@@ -62,7 +62,6 @@ const RESERVED_ENV_NAMES = [
 const RESERVED_CONTAINER_PATHS = [
     '/', '/proc', '/sys', '/dev', '/etc', '/usr', '/bin', '/sbin', '/lib',
     '/var/run', '/var/run/docker.sock', '/run',
-    '/config/test-corpus',
     '/defaults'
 ];
 

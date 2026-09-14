@@ -587,12 +587,12 @@ export class ContainerImageService {
      * directory itself in place with its ownership intact.
      */
     private async resetConfigDirectory(containerId: string): Promise<void> {
-        // Mount points are skipped rather than deleted. Every instance has the
-        // shared test corpus bind-mounted read-only at /config/test-corpus, so
-        // a plain recursive delete fails with "Device or resource busy" and
-        // takes the whole commit with it. A bind mount's contents come from the
-        // host and are never part of the image anyway, so leaving the empty
-        // directory is both the only option and the correct one.
+        // Mount points are skipped rather than deleted. An image's shared
+        // folders are bind-mounted read-only under /config, so a plain
+        // recursive delete fails with "Device or resource busy" and takes the
+        // whole commit with it. A bind mount's contents come from the host and
+        // are never part of the image anyway, so leaving the empty directory is
+        // both the only option and the correct one.
         const { exitCode, output } = await containerService.execInContainer(containerId, [
             'bash', '-lc',
             'status=0; ' +

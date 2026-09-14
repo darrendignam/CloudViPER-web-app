@@ -137,7 +137,7 @@ describe('volume containment', () => {
         }
     });
 
-    it.each(['/', '/etc', '/proc', '/var/run/docker.sock', '/config/test-corpus', '/defaults'])(
+    it.each(['/', '/etc', '/proc', '/var/run/docker.sock', '/defaults'])(
         'should refuse %s as a destination inside the desktop', (containerPath) => {
             // Mounting over these replaces something the desktop needs rather
             // than adding anything.
