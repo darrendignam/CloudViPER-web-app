@@ -55,11 +55,16 @@ services:
       # a check that passed here would mount something else there.
       - ${INSTANCE_VOLUME_ROOT:-/mnt/cloudviper}:${INSTANCE_VOLUME_ROOT:-/mnt/cloudviper}:ro
     # Bounded so the app can never again be the process that starves the host.
-    # Steady state is around 50MB; this is headroom, not a target.
+    # Steady state is around 55MB; this is headroom, not a target.
+    #
+    # It also holds an SSE connection per open dashboard, so the ceiling has to
+    # cover a room of admins watching at once rather than the idle case.
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 768M
+        reservations:
+          memory: 128M
     depends_on:
       mysqldb:
         condition: service_healthy
@@ -81,12 +86,15 @@ services:
     container_name: cloud-viper-mysqldb
     restart: always
     env_file: ./web-app/.env.production.local
+    # Measured at 277MB with a single user, which is 92% of the old 300M ceiling
+    # and one busy room away from the OOM killer. The database dying is an
+    # outage for everyone, so it gets the headroom rather than the squeeze.
     deploy:
       resources:
         limits:
-          memory: 300M
+          memory: 768M
         reservations:
-          memory: 200M
+          memory: 256M
     # Loopback only. The database is reachable through an SSH tunnel when it is
     # needed and from nowhere else; publishing 3306 on a public address would
     # bypass the firewall through Docker's own iptables rules.
