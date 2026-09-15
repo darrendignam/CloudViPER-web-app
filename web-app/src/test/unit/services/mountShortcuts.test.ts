@@ -182,6 +182,38 @@ describe('desktop shortcuts for shared folders', () => {
         calls.forEach((call: any) => expect(call[2]).toEqual(expect.objectContaining({ User: 'abc' })));
     });
 
+    it('should set the editor colour scheme on every instance', async () => {
+        // Pluma defaults to Yaru, which renders CSV and XML with very little
+        // contrast. The workshop material was written against Kate.
+        await viperInstanceService.createInstance(ADMIN as any);
+
+        const applied = mockContainerService.execInContainer.mock.calls
+            .filter((call: any) => Array.isArray(call[1]) && call[1][0] === 'gsettings')
+            .map((call: any) => call[1].join(' '));
+
+        expect(applied).toContain('gsettings set org.mate.pluma color-scheme kate');
+    });
+
+    it('should apply desktop settings as abc, not as root', async () => {
+        // Written to that user's dconf under /config. As root they would land
+        // in root's and the desktop would never read them.
+        await viperInstanceService.createInstance(ADMIN as any);
+
+        const calls = mockContainerService.execInContainer.mock.calls
+            .filter((call: any) => Array.isArray(call[1]) && call[1][0] === 'gsettings');
+
+        expect(calls.length).toBeGreaterThan(0);
+        calls.forEach((call: any) => expect(call[2]).toEqual(expect.objectContaining({ User: 'abc' })));
+    });
+
+    it('should still start the instance when a desktop setting cannot be applied', async () => {
+        // Failing a launch over an editor theme would be absurd.
+        mockContainerService.execInContainer.mockImplementation(async (_id: string, command: string[]) =>
+            command[0] === 'gsettings' ? { output: 'no such schema', exitCode: 1 } : { output: '', exitCode: 0 });
+
+        await expect(viperInstanceService.createInstance(ADMIN as any)).resolves.toBeDefined();
+    });
+
     it('should leave the desktop alone when the image shares nothing', async () => {
         await viperInstanceService.createInstance(ADMIN as any);
 

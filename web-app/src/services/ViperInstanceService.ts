@@ -638,6 +638,7 @@ class ViperInstanceService {
     await this.setupMonitoringScripts(container, instanceUUID, statusKey);
     
     await this.createMountShortcuts(container, instanceUUID, volumes);
+    await this.applyDesktopSettings(container, instanceUUID);
   }
 
   /**
@@ -819,6 +820,51 @@ class ViperInstanceService {
         timestamp: new Date().toISOString()
       });
       throw setupError;
+    }
+  }
+
+  /**
+   * Desktop settings the image does not set for itself.
+   *
+   * Applied here rather than baked into the image because the image is 16GB and
+   * re-shipping it to change a colour is not a trade anybody would make. These
+   * are gsettings keys written as abc, whose HOME is /config, so they land in
+   * that instance's own dconf and survive for its lifetime.
+   *
+   * Cosmetic only, deliberately. Anything that changes what a desktop can reach
+   * belongs in the image or in the instance's own configuration, where it is
+   * validated, not in a list of appearance tweaks.
+   */
+  private static readonly DESKTOP_SETTINGS: Array<[string, string, string]> = [
+    // Pluma defaults to Yaru, which renders CSV and XML with very little
+    // contrast between the syntax colours. Kate is the scheme the workshop
+    // material was written against, and it ships with GtkSourceView already.
+    ['org.mate.pluma', 'color-scheme', 'kate']
+  ];
+
+  private async applyDesktopSettings(container: any, instanceUUID: string): Promise<void> {
+    try {
+      for (const [schema, key, value] of ViperInstanceService.DESKTOP_SETTINGS) {
+        await this.execChecked(container.id, ['gsettings', 'set', schema, key, value], { User: 'abc' });
+      }
+
+      appLogger.info('Desktop settings applied', {
+        eventType: 'Container Setup',
+        instanceUUID,
+        containerId: container.id,
+        settings: ViperInstanceService.DESKTOP_SETTINGS.map(([schema, key]) => `${schema} ${key}`),
+        timestamp: new Date().toISOString()
+      });
+    } catch (settingsErr) {
+      // Not fatal. A desktop with the wrong editor colours is a desktop that
+      // works, and failing a launch over a theme would be absurd.
+      appLogger.warn('Could not apply desktop settings', {
+        eventType: 'Container Setup Warning',
+        instanceUUID,
+        containerId: container.id,
+        error: (settingsErr as Error).message,
+        timestamp: new Date().toISOString()
+      });
     }
   }
 
