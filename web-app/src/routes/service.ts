@@ -9,7 +9,7 @@ import { readIntEnv } from '../utility/envConfig';
 import { appLogger } from '../config/logger';
 import { UserRole } from '../types/UserRole';
 import containerService from '../services/ContainerService';
-import viperInstanceService from '../services/ViperInstanceService';
+import viperInstanceService, { getInstanceLimit } from '../services/ViperInstanceService';
 import systemStatsService from '../services/SystemStatsService';
 
 
@@ -105,24 +105,6 @@ function checkUserPermission(user: ServiceUser | undefined, requiredRole: UserRo
     return { authorized: true };
 }
 
-// Helper function to get instance limits by role
-function getInstanceLimit(role: UserRole): number {
-    switch (role) {
-        case UserRole.TESTING:
-        case UserRole.MEMBER:
-            return 1;
-        case UserRole.TEAM_LEADER:
-            return 5; // Team leaders can have more instances
-        case UserRole.TEAM_ADMIN:
-            return 10; // Team admins can have more instances
-        case UserRole.SUBSCRIBER:
-            return 10; // or unlimited, depending on business rules
-        case UserRole.ADMIN:
-            return -1; // unlimited
-        default:
-            return 0;
-    }
-}
 
 // Helper function to authenticate monitoring endpoints using statusKey
 async function authenticateMonitoringRequest(instanceUUID: string, providedStatusKey: string): Promise<{
@@ -394,7 +376,17 @@ router.post('/new-instance', async (req: Request, res: Response): Promise<void> 
         const requestedImageId = req.body?.imageId ? Number(req.body.imageId) : null;
         const buildMode = req.body?.buildMode === true;
 
-        const result = await viperInstanceService.createInstance(user!, requestedImageId, { buildMode });
+        // Passed through rather than pre-filtered. The service refuses each of
+        // these for a role that may not use it, and one gate that is tested
+        // beats two that can drift apart.
+        const result = await viperInstanceService.createInstance(user!, requestedImageId, {
+            buildMode,
+            ownerId: req.body?.ownerId ? Number(req.body.ownerId) : undefined,
+            envOverrides: req.body?.envOverrides ?? undefined,
+            volumeOverrides: req.body?.volumeOverrides ?? undefined,
+            cpuLimit: req.body?.cpuLimit ?? undefined,
+            memoryLimitMb: req.body?.memoryLimitMb ?? undefined
+        });
         res.json(result);
     } catch (err) {
         const error = err as Error;

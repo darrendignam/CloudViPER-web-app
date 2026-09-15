@@ -11,6 +11,14 @@ export const INSTANCE_CREDENTIAL_ATTRIBUTES = ['masterToken', 'statusKey', 'sess
 interface ViperInstanceAttributes {
     id?: number;
     owner: number;
+    /**
+     * Who pressed the button, when that was not the owner.
+     *
+     * Null for an ordinary self-service launch. Set when an administrator
+     * launched on somebody's behalf, because "who owns this" and "who caused
+     * this to exist" stop being the same question the moment that is allowed.
+     */
+    createdById?: number | null;
     uuid: string;
     dockerid: string;
     name: string;
@@ -43,6 +51,7 @@ export default (sequelize: Sequelize) => {
     class ViperInstance extends Model<ViperInstanceAttributes> implements ViperInstanceAttributes {
         public id?: number;
         public owner!: number;
+        public createdById?: number | null;
         public uuid!: string;
         public dockerid!: string;
         public name!: string;
@@ -92,6 +101,7 @@ export default (sequelize: Sequelize) => {
     ViperInstance.init({
         id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
         owner: { type: DataTypes.INTEGER, allowNull: true },
+        createdById: { type: DataTypes.INTEGER, allowNull: true },
         uuid: { type: DataTypes.STRING, allowNull: true },
         dockerid: { type: DataTypes.STRING, allowNull: true },
         name: { type: DataTypes.STRING, allowNull: true },

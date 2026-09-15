@@ -248,6 +248,15 @@
           // Image selection. Only some roles may choose, and the server refuses
           // the rest, so the control only appears for those who can use it.
           launchableImages: [],
+          // The advanced launch panel. Admin only, and closed until asked for:
+          // the ordinary case is one button, and it should stay that way.
+          advancedOpen: false,
+          launchOwnerId: '',
+          candidateOwners: [],
+          launchEnv: [],
+          launchVolumes: [],
+          launchShares: [],
+          advancedPrimed: false,
           selectedImageId: '',
           buildMode: false,
           launchError: null,
@@ -336,6 +345,62 @@
             if (this.canChooseImage()) this.fetchLaunchableImages();
           })
           .catch(error => this.setState({ saving: false, saveError: error.message }));
+      };
+
+      /**
+       * Fill the advanced panel from whatever this launch would do untouched,
+       * so an admin edits a real configuration rather than an empty form and
+       * has to remember what the image already sets.
+       */
+      openAdvanced = () => {
+        if (this.state.advancedOpen) {
+          this.setState({ advancedOpen: false });
+          return;
+        }
+
+        this.setState({ advancedOpen: true });
+
+        if (this.state.advancedPrimed) return;
+
+        var chosen = this.state.launchableImages.find(
+          image => String(image.id) === String(this.state.selectedImageId));
+
+        if (!chosen) {
+          chosen = this.state.launchableImages.find(image => image.isGlobalDefault);
+        }
+
+        this.setState({
+          advancedPrimed: true,
+          launchEnv: chosen ? Object.entries(chosen.envVars || {}).map(([name, value]) => ({ name, value })) : [],
+          launchVolumes: chosen ? (chosen.volumes || []).map(v => Object.assign({}, v)) : []
+        });
+
+        fetchJson('/account/users')
+          .then(payload => this.setState({
+            candidateOwners: (payload.users || payload || []).map(u => ({
+              id: u.id, username: u.username, email: u.email, role: u.role
+            }))
+          }))
+          .catch(() => { /* The owner picker degrades to "me", which is the default anyway. */ });
+
+        fetchJson('/images/api/shares')
+          .then(payload => this.setState({ launchShares: payload.directories || [] }))
+          .catch(() => { /* Mount editing degrades to what the image already set. */ });
+      };
+
+      updateLaunchEnv = (index, field, value) => {
+        this.setState(prev => ({
+          launchEnv: prev.launchEnv.map((entry, i) =>
+            i === index ? Object.assign({}, entry, { [field]: value }) : entry)
+        }));
+      };
+
+      updateLaunchVolume = (index, field, value) => {
+        this.setState(prev => ({
+          volumesEdited: true,
+          launchVolumes: prev.launchVolumes.map((mount, i) =>
+            i === index ? Object.assign({}, mount, { [field]: value }) : mount)
+        }));
       };
 
       fetchLaunchableImages = () => {
@@ -484,7 +549,8 @@
       }
 
       startNewInstance = () => {
-        const { selectedImageId, buildMode, starting } = this.state;
+        const { selectedImageId, buildMode, starting, advancedOpen,
+                launchOwnerId, launchEnv, launchVolumes } = this.state;
         if (starting) return;
         const body = {};
 
@@ -492,6 +558,24 @@
         // request from naming an image, so it is omitted rather than sent empty.
         if (selectedImageId) body.imageId = Number(selectedImageId);
         if (buildMode) body.buildMode = true;
+
+        // Only sent when the panel is open. A closed panel must mean "launch it
+        // the way the image says", not "launch it with whatever was left in
+        // these fields last time".
+        if (advancedOpen && this.props.userRole === 'admin') {
+          if (launchOwnerId) body.ownerId = Number(launchOwnerId);
+
+          var env = {};
+          var named = false;
+          launchEnv.forEach(function (entry) {
+            if (entry.name.trim()) { env[entry.name.trim()] = entry.value; named = true; }
+          });
+          if (named) body.envOverrides = env;
+
+          // Omitted unless edited, because an empty list is a real instruction
+          // here: it means mount nothing.
+          if (this.state.volumesEdited) body.volumeOverrides = launchVolumes;
+        }
 
         this.setState({ launchError: null, starting: true });
 
@@ -503,7 +587,16 @@
           .then(() => {
             // The feed pushes the new list on its next tick, so there is no
             // fetch here; the button simply stops being busy.
-            this.setState({ buildMode: false, starting: false });
+            this.setState({
+              buildMode: false,
+              starting: false,
+              advancedOpen: false,
+              advancedPrimed: false,
+              volumesEdited: false,
+              launchOwnerId: '',
+              launchEnv: [],
+              launchVolumes: []
+            });
           })
           .catch(error => this.setState({ launchError: error.message, starting: false }));
       }
@@ -981,7 +1074,9 @@ Current Activity Score: ${data.summary.currentScore || 0}`);
       }
 
       render() {
-        const { instances, isLoading, error, selectedInstance, instanceDetails, detailsLoading, filters, showFilters, screenshotModal, launchableImages, selectedImageId, buildMode, launchError, starting, removing, saveTarget, saveName, saveTag, saveDescription, savePromote, saving, saveError } = this.state;
+        const { instances, isLoading, error, selectedInstance, instanceDetails, detailsLoading, filters, showFilters, screenshotModal, launchableImages, selectedImageId, buildMode, launchError, starting, removing, saveTarget, saveName, saveTag, saveDescription, savePromote, saving, saveError,
+                advancedOpen, launchOwnerId, candidateOwners, launchEnv, launchVolumes,
+                launchShares } = this.state;
         const filteredInstances = this.getFilteredInstances();
 
         if (isLoading) {
@@ -1077,6 +1172,113 @@ Current Activity Score: ${data.summary.currentScore || 0}`);
                       />{' '}
                       Build instance
                     </label>
+                  )}
+
+                  {this.props.userRole === 'admin' && (
+                    <button type="button" className="launch-advanced-toggle" onClick={this.openAdvanced}>
+                      <i className={'fas fa-chevron-' + (advancedOpen ? 'down' : 'right')}></i>{' '}
+                      Advanced
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {advancedOpen && this.props.userRole === 'admin' && (
+                <div className="launch-advanced">
+                  <p className="text-muted small">
+                    These apply to this launch only and change nothing about the image.
+                    Leave them alone and the instance starts exactly as its image says.
+                  </p>
+
+                  <div className="launch-advanced-row">
+                    <label className="launch-advanced-label" htmlFor="launch-owner">Owner</label>
+                    <select
+                      id="launch-owner"
+                      className="form-control form-control-sm"
+                      value={launchOwnerId}
+                      onChange={(e) => this.setState({ launchOwnerId: e.target.value })}
+                    >
+                      <option value="">Me</option>
+                      {candidateOwners.map(person => (
+                        <option key={person.id} value={person.id}>
+                          {person.username} ({person.email})
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-muted small">
+                      It is running and waiting when they next log in
+                    </span>
+                  </div>
+
+                  <h6 className="mt-3">Environment</h6>
+                  <p className="text-muted small">
+                    Pre-filled from the image. Give each person their own API key here
+                    so one runaway cannot spend everybody's credit.
+                  </p>
+
+                  {launchEnv.map((entry, index) => (
+                    <div className="env-row" key={index}>
+                      <input className="form-control form-control-sm" placeholder="NAME"
+                        value={entry.name}
+                        onChange={(e) => this.updateLaunchEnv(index, 'name', e.target.value)} />
+                      <input className="form-control form-control-sm" placeholder="value"
+                        value={entry.value}
+                        onChange={(e) => this.updateLaunchEnv(index, 'value', e.target.value)} />
+                      <button type="button" className="btn btn-sm btn-outline-danger"
+                        onClick={() => this.setState(prev => ({
+                          launchEnv: prev.launchEnv.filter((_, i) => i !== index)
+                        }))}>Remove</button>
+                    </div>
+                  ))}
+
+                  <button type="button" className="btn btn-sm btn-outline-secondary"
+                    onClick={() => this.setState(prev => ({
+                      launchEnv: prev.launchEnv.concat({ name: '', value: '' })
+                    }))}>
+                    Add a variable
+                  </button>
+
+                  <h6 className="mt-3">Shared folders</h6>
+
+                  {launchVolumes.length === 0 && (
+                    <p className="text-muted small">Nothing shared into this instance.</p>
+                  )}
+
+                  {launchVolumes.map((mount, index) => (
+                    <div className="env-row" key={index}>
+                      <select className="form-control form-control-sm"
+                        value={mount.hostPath}
+                        onChange={(e) => this.updateLaunchVolume(index, 'hostPath', e.target.value)}>
+                        <option value={mount.hostPath}>{mount.hostPath}</option>
+                        {launchShares
+                          .filter(share => share.hostPath !== mount.hostPath)
+                          .map(share => (
+                            <option key={share.hostPath} value={share.hostPath}>{share.hostPath}</option>
+                          ))}
+                      </select>
+                      <input className="form-control form-control-sm"
+                        value={mount.containerPath}
+                        onChange={(e) => this.updateLaunchVolume(index, 'containerPath', e.target.value)} />
+                      <button type="button" className="btn btn-sm btn-outline-danger"
+                        onClick={() => this.setState(prev => ({
+                          volumesEdited: true,
+                          launchVolumes: prev.launchVolumes.filter((_, i) => i !== index)
+                        }))}>Remove</button>
+                    </div>
+                  ))}
+
+                  {launchShares.length > 0 && (
+                    <button type="button" className="btn btn-sm btn-outline-secondary"
+                      onClick={() => this.setState(prev => ({
+                        volumesEdited: true,
+                        launchVolumes: prev.launchVolumes.concat({
+                          hostPath: prev.launchShares[0].hostPath,
+                          containerPath: prev.launchShares[0].suggestedContainerPath,
+                          readOnly: true
+                        })
+                      }))}>
+                      Add a folder
+                    </button>
                   )}
                 </div>
               )}

@@ -110,6 +110,50 @@ function controlPlaneTarget(instance: any) {
 /**
  * ViperInstanceService - Handles operations related to Viper instances
  */
+/**
+ * What a launch may be told to do beyond "start one for me".
+ *
+ * Everything here except buildMode is a system administrator's privilege, and
+ * all of it is validated by the same rules a saved image is, so an override
+ * changes what a desktop is given without changing what a desktop may reach.
+ */
+/**
+ * How many instances a role may own at once. -1 is unlimited.
+ *
+ * Lives here rather than beside the route because two gates now consult it: the
+ * caller's own limit, and the limit of whoever an administrator is launching on
+ * behalf of. Two copies of this would drift.
+ */
+export function getInstanceLimit(role: UserRole): number {
+    switch (role) {
+        case UserRole.TESTING:
+        case UserRole.MEMBER:
+            return 1;
+        case UserRole.TEAM_LEADER:
+            return 5; // Team leaders can have more instances
+        case UserRole.TEAM_ADMIN:
+            return 10; // Team admins can have more instances
+        case UserRole.SUBSCRIBER:
+            return 10; // or unlimited, depending on business rules
+        case UserRole.ADMIN:
+            return -1; // unlimited
+        default:
+            return 0;
+    }
+}
+
+export interface CreateInstanceOptions {
+  buildMode?: boolean;
+  /** Launch on someone else's behalf, so it is waiting when they log in. */
+  ownerId?: number | null;
+  /** Merged over the image's own, per name. */
+  envOverrides?: Record<string, unknown> | null;
+  /** Replaces the image's list outright when given. Omit to keep the image's. */
+  volumeOverrides?: unknown;
+  cpuLimit?: number | null;
+  memoryLimitMb?: number | null;
+}
+
 class ViperInstanceService {
   
   /**
@@ -123,36 +167,107 @@ class ViperInstanceService {
    * separate path rather than a switch on the normal one: every other instance
    * stays hardened, and which kind this is stays visible on the row.
    */
+  /**
+   * Who the instance belongs to.
+   *
+   * Defaults to whoever asked. An administrator may name someone else, which is
+   * how fifteen desktops come to be running before fifteen people arrive, and
+   * the target is read from the database rather than trusted from the request
+   * because their role and team decide which image they resolve to.
+   */
+  private async resolveOwner(user: ServiceUser, ownerId?: number | null): Promise<ServiceUser> {
+    if (ownerId === undefined || ownerId === null || ownerId === user.id) {
+      return user;
+    }
+
+    const target = await db.User.findByPk(ownerId);
+
+    if (!target) {
+      throw new Error('There is no user with that id to own the instance');
+    }
+
+    return {
+      id: target.id,
+      username: target.username,
+      email: target.email,
+      role: target.role,
+      teamId: target.teamId ?? null
+    } as ServiceUser;
+  }
+
   async createInstance(
     user: ServiceUser,
     requestedImageId?: number | null,
-    options: { buildMode?: boolean } = {}
+    options: CreateInstanceOptions = {}
   ): Promise<any> {
-    const ownerId = user.id;
     const instanceUUID = helperFunctions.generateRandomString(12);
     const masterToken = helperFunctions.generateSessionToken();
     const statusKey = helperFunctions.generateRandomString(12);
     const instanceURL = `${instanceUUID}.${process.env.APP_HOST}`;
     const containerName = `viper-cloud-${instanceUUID}`;
-    
+
     const buildMode = options.buildMode === true;
 
     if (buildMode && user.role !== UserRole.ADMIN) {
       throw new Error('Only system administrators can create build instances');
     }
 
-    const image = await containerImageService.resolveImageForUser(user, requestedImageId);
+    // Everything below is a system administrator's privilege. A member's launch
+    // is entirely decided by the image their team was given, which is the point:
+    // they get a working desktop without being handed the means to reconfigure
+    // one.
+    const overriding = options.envOverrides !== undefined
+      || options.volumeOverrides !== undefined
+      || (options.ownerId !== undefined && options.ownerId !== null);
+
+    if (overriding && user.role !== UserRole.ADMIN) {
+      throw new Error('Only system administrators can override an instance at launch');
+    }
+
+    const owner = await this.resolveOwner(user, options.ownerId);
+
+    // The target's own limit applies, not the administrator's. Without this a
+    // slip while pre-creating a room's worth of desktops gives one person three
+    // and another none, and nothing complains until the day.
+    if (owner.id !== user.id) {
+      const limit = getInstanceLimit(owner.role);
+
+      if (limit !== -1) {
+        const held = await db.ViperInstance.count({ where: { owner: owner.id } });
+
+        if (held >= limit) {
+          throw new Error(
+            `${owner.username} already has ${held} instance${held === 1 ? '' : 's'}, ` +
+            `which is the limit for a ${owner.role} account`);
+        }
+      }
+    }
+
+    const image = await containerImageService.resolveImageForUser(owner, requestedImageId);
 
     // Re-validated at launch rather than trusted from the row. What was legal
     // when it was saved may not be now: a directory can be deleted, replaced by
     // a symlink, or moved outside the shared root, and the row would still hold
     // the path that used to be fine.
-    const customEnv = validateEnvVars(image.envVars);
-    const customVolumes = validateVolumes(image.volumes);
+    //
+    // Overrides are validated by the same rules, not waved through for being an
+    // admin's. An administrator may change what a desktop is given; they may not
+    // hand it a variable the platform owns or a path outside the shared root,
+    // because that would breach the boundary between one desktop and another
+    // rather than merely configure this one.
+    const envOverrides = validateEnvVars(options.envOverrides);
+    const customEnv = { ...validateEnvVars(image.envVars), ...envOverrides };
+
+    const customVolumes = options.volumeOverrides === undefined
+      ? validateVolumes(image.volumes)
+      : validateVolumes(options.volumeOverrides);
+
     const resourceLimits = validateResourceLimits({
-        cpuLimit: image.cpuLimit,
-        memoryLimitMb: image.memoryLimitMb
+        cpuLimit: options.cpuLimit ?? image.cpuLimit,
+        memoryLimitMb: options.memoryLimitMb ?? image.memoryLimitMb
     });
+
+    const ownerId = owner.id;
 
     appLogger.info('Starting instance creation', {
       eventType: 'Instance Creation Started',
@@ -160,6 +275,12 @@ class ViperInstanceService {
       imageOrigin: image.origin,
       buildMode,
       extraEnvVars: Object.keys(customEnv),
+      // Names only. The values are why this matters: one of them is usually an
+      // API key, and a log is the last place it should end up.
+      overriddenEnvVars: Object.keys(envOverrides),
+      volumesOverridden: options.volumeOverrides !== undefined,
+      ownerId,
+      launchedOnBehalf: ownerId !== user.id,
       extraVolumes: customVolumes.map((mount) => `${mount.hostPath} -> ${mount.containerPath}`),
       cpuLimit: resourceLimits.cpuLimit,
       memoryLimitMb: resourceLimits.memoryLimitMb,
@@ -272,6 +393,9 @@ class ViperInstanceService {
         devPorts,
         statusKey: statusKey,
         owner: ownerId,
+        // Null when someone launched their own, so the column reads as "an
+        // administrator did this for them" rather than being noise on every row.
+        createdById: ownerId === user.id ? null : user.id,
         status: 'created',
         logs: [{ timestamp: new Date(), message: "Created" }],
       });
