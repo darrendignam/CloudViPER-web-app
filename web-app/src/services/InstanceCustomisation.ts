@@ -95,10 +95,20 @@ const MIN_CPU_LIMIT = 0.25;
 
 /**
  * A fork bomb needs no memory to speak of, so a memory limit alone does not
- * stop one. This is not configurable per image because no legitimate desktop
- * comes near it.
+ * stop one.
+ *
+ * 4096 rather than something tighter because a thread is not a unit of CPU, it
+ * is about 16 KB of kernel stack, so this ceiling costs roughly 64 MB per
+ * instance and nothing else. A fork bomb reaches millions, so the protection
+ * still holds.
+ *
+ * Measured, after an earlier 512 turned out to be far too low: a ViPER desktop
+ * sits at around 500 threads while merely idle, before anyone opens anything.
+ * Firefox alone holds 166 of them across its processes and a JVM adds 40, so
+ * clicking DROID hit the ceiling every time. The cgroup recorded it plainly,
+ * pids.events reporting 129 refusals against memory.events reporting none.
  */
-const INSTANCE_PIDS_LIMIT = 512;
+const INSTANCE_PIDS_LIMIT = 4096;
 
 /**
  * How far past its memory limit an instance may go into swap before the kernel
@@ -135,12 +145,17 @@ const INSTANCE_OOM_SCORE_ADJ = 500;
 
 /**
  * File handles and processes. A desktop opening a corpus needs a lot of the
- * former and few of the latter, and the host default is unbounded enough that
- * one runaway can exhaust the machine's global file table.
+ * former, and the host default is unbounded enough that one runaway can exhaust
+ * the machine's global file table.
+ *
+ * nproc must stay above INSTANCE_PIDS_LIMIT, not below it. RLIMIT_NPROC counts
+ * threads per UID on Linux and every process in the desktop runs as abc, so a
+ * soft nproc under the pid ceiling becomes the real wall, in the same place but
+ * with a worse error. Raising one without the other fixes nothing.
  */
 const INSTANCE_ULIMITS = [
     { Name: 'nofile', Soft: 4096, Hard: 8192 },
-    { Name: 'nproc', Soft: 2048, Hard: 4096 }
+    { Name: 'nproc', Soft: 8192, Hard: 8192 }
 ];
 
 function readNonNegativeNumber(raw: string | undefined, fallback: number): number {

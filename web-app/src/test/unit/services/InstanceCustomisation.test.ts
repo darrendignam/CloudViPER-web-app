@@ -398,6 +398,25 @@ describe('resource limits', () => {
         expect(names).toEqual(expect.arrayContaining(['nofile', 'nproc']));
     });
 
+    it('should keep nproc above the pid ceiling, or the pid ceiling is not the ceiling', () => {
+        // RLIMIT_NPROC counts threads per UID and the whole desktop runs as abc,
+        // so an nproc below PidsLimit becomes the real wall, in the same place
+        // but with a worse error. Raising one without the other fixes nothing,
+        // which is exactly how the first attempt at this went.
+        const docker = dockerResources();
+        const nproc = docker.Ulimits.find((ulimit: any) => ulimit.Name === 'nproc');
+
+        expect(nproc.Soft).toBeGreaterThanOrEqual(docker.PidsLimit);
+        expect(nproc.Hard).toBeGreaterThanOrEqual(docker.PidsLimit);
+    });
+
+    it('should allow a desktop enough processes to actually run', () => {
+        // A ViPER desktop idles near 500 threads before anyone opens anything:
+        // Firefox holds 166 across its processes and each JVM tool adds about
+        // 40. An earlier 512 refused DROID every single time.
+        expect(dockerResources().PidsLimit).toBeGreaterThanOrEqual(2048);
+    });
+
     it('should hand out a fresh ulimit array each time', () => {
         // Docker's client mutates what it is given. A shared array would leak
         // one instance's changes into every instance launched afterwards.
