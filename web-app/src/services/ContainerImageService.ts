@@ -295,7 +295,7 @@ export class ContainerImageService {
      */
     async performPull(image: any): Promise<void> {
         try {
-            await containerService.pullImage(image.reference);
+            await this.fetchOrAdopt(image);
             const details = await containerService.inspectImage(image.reference);
 
             await image.update({
@@ -322,6 +322,44 @@ export class ContainerImageService {
                 imageId: image.id,
                 reference: image.reference,
                 error: message,
+                timestamp: new Date().toISOString()
+            });
+        }
+    }
+
+    /**
+     * Get the image onto this host, by pull if a registry has it and by
+     * adoption if this host already does.
+     *
+     * An image shipped as a tarball and loaded with `docker load` exists in no
+     * registry, so the pull returns 404 and the pool entry lands FAILED even
+     * though the image is sitting right there. Adding something already on the
+     * host should mean adopt it, not fetch it again.
+     *
+     * The pull is still attempted first, so a tag that a registry does serve is
+     * refreshed rather than left at whatever stale copy is local.
+     */
+    private async fetchOrAdopt(image: any): Promise<void> {
+        try {
+            await containerService.pullImage(image.reference);
+            return;
+        } catch (pullError) {
+            const local = await containerService.inspectImage(image.reference).catch(() => null);
+
+            if (!local) {
+                throw pullError;
+            }
+
+            // It came from no registry, so re-pulling cannot bring it back and
+            // deleting it means shipping the tarball again. Recording that here
+            // is what makes removal ask for confirmation first.
+            await image.update({ source: ImageSource.COMMIT });
+
+            appLogger.info('Adopted an image already on this host', {
+                eventType: 'Image Adopted',
+                imageId: image.id,
+                reference: image.reference,
+                pullError: (pullError as Error).message,
                 timestamp: new Date().toISOString()
             });
         }

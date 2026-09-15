@@ -120,6 +120,9 @@ describe('addImageFromRegistry', () => {
         // become an unhandled one. The row is the only place to report this.
         const created = { id: 1, reference: 'ghcr.io/x/missing:1', update: jest.fn().mockResolvedValue(undefined) };
         mockContainerService.pullImage.mockRejectedValue(new Error('manifest unknown'));
+        // Absent from the host as well as the registry, which is what makes
+        // this a failure rather than something to adopt.
+        mockContainerService.inspectImage.mockRejectedValue(new Error('no such image'));
 
         await expect(containerImageService.performPull(created)).resolves.toBeUndefined();
 
@@ -127,6 +130,44 @@ describe('addImageFromRegistry', () => {
             status: ImageStatus.FAILED,
             statusMessage: 'manifest unknown'
         });
+    });
+
+    it('should adopt an image the host already has when no registry serves it', async () => {
+        // A workshop image shipped as a tarball and loaded with docker load
+        // exists in no registry. Before this, adding it left the row FAILED
+        // with a 404 while the image sat on the host unused.
+        const created = { id: 1, reference: 'opf-cloud-viper:ipres2026', update: jest.fn().mockResolvedValue(undefined) };
+        mockContainerService.pullImage.mockRejectedValue(
+            new Error("pull access denied, repository does not exist or may require 'docker login'"));
+
+        await containerImageService.performPull(created);
+
+        expect(created.update).toHaveBeenCalledWith(expect.objectContaining({
+            status: ImageStatus.AVAILABLE,
+            digest: 'sha256:abc'
+        }));
+    });
+
+    it('should mark an adopted image as unrecoverable, so removal asks first', async () => {
+        // Re-pulling cannot bring it back; deleting it means shipping the
+        // tarball again.
+        const created = { id: 1, reference: 'opf-cloud-viper:ipres2026', update: jest.fn().mockResolvedValue(undefined) };
+        mockContainerService.pullImage.mockRejectedValue(new Error('404'));
+
+        await containerImageService.performPull(created);
+
+        expect(created.update).toHaveBeenCalledWith({ source: ImageSource.COMMIT });
+    });
+
+    it('should prefer the registry when one does serve the tag', async () => {
+        // Adoption must not become a way of silently pinning a stale local copy
+        // of a tag the registry has moved on.
+        const created = { id: 1, reference: 'ghcr.io/x/y:1', update: jest.fn().mockResolvedValue(undefined) };
+
+        await containerImageService.performPull(created);
+
+        expect(mockContainerService.pullImage).toHaveBeenCalledWith('ghcr.io/x/y:1');
+        expect(created.update).not.toHaveBeenCalledWith({ source: ImageSource.COMMIT });
     });
 
     it('should refuse a reference that is not one', async () => {
