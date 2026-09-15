@@ -55,3 +55,26 @@ describe('handlebars templates', () => {
         expect(offenders.map((file) => path.relative(VIEWS_ROOT, file))).toEqual([]);
     });
 });
+
+describe('icons', () => {
+    /**
+     * Pictographs as numeric character references depend on the reader having a
+     * font that covers them, and most systems do not cover this block. U+26F6,
+     * "square four corners", was the Fullscreen button's icon and rendered as an
+     * empty box: it compiles, it validates, it deploys, and the only way to find
+     * it is for somebody to look at the page.
+     *
+     * Font Awesome is loaded by the layout and used everywhere else, so an icon
+     * has a way of being written that does not depend on the reader's fonts.
+     */
+    const MISC_SYMBOLS = /&#(?:(9[7-9]\d\d)|x26[0-9a-fA-F]{2});/g;
+
+    it.each(templates.map((file) => [path.relative(VIEWS_ROOT, file), file]))(
+        '%s should not draw icons with characters most fonts lack',
+        (_name, file) => {
+            const source = fs.readFileSync(file as string, 'utf8');
+            const found = source.match(MISC_SYMBOLS) || [];
+
+            expect(found).toEqual([]);
+        });
+});

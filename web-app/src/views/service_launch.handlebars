@@ -3,10 +3,10 @@
         <span class="viper-launch-title">{{instanceName}}</span>
         <span class="viper-launch-status" id="connection-status">Requesting access</span>
         <button type="button" class="viper-launch-action" id="fullscreen-button" disabled>
-            <span aria-hidden="true">&#9974;</span> Fullscreen
+            <i class="fas fa-expand" aria-hidden="true"></i> Fullscreen
         </button>
         <button type="button" class="viper-launch-action" id="popout-button" disabled>
-            <span aria-hidden="true">&#8599;</span> Open in new tab
+            <i class="fas fa-up-right-from-square" aria-hidden="true"></i> Open in new tab
         </button>
         <a class="viper-launch-back" href="/service">Back to instances</a>
     </div>
@@ -131,9 +131,11 @@
         });
 
         document.addEventListener('fullscreenchange', function () {
+            // The icon tracks the state along with the label: compress means
+            // "this will shrink", which is what the button will actually do.
             fullscreenButton.innerHTML = document.fullscreenElement
-                ? '<span aria-hidden="true">&#9974;</span> Exit fullscreen'
-                : '<span aria-hidden="true">&#9974;</span> Fullscreen';
+                ? '<i class="fas fa-compress" aria-hidden="true"></i> Exit fullscreen'
+                : '<i class="fas fa-expand" aria-hidden="true"></i> Fullscreen';
         });
 
         // Popping out trades the whole point of the frame for a resizable
