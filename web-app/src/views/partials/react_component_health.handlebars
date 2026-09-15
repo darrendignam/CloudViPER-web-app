@@ -8,7 +8,10 @@ class SystemHealth extends React.Component {
             error: null,
             lastUpdated: null,
             // Live host and per-instance telemetry, pushed rather than polled.
-            liveStats: null
+            liveStats: null,
+            // Keyed by docker id so two desktops cannot share a busy state.
+            killing: {},
+            killError: null
         };
     }
 
@@ -61,6 +64,42 @@ class SystemHealth extends React.Component {
             this.setState({ liveStats });
         });
     }
+
+    /**
+     * Stop one desktop from here.
+     *
+     * The confirmation names the person rather than the container, because the
+     * decision being made is "cut this person off", and viper-cloud-xpi04 does
+     * not read like a decision about anybody.
+     */
+    killInstance = (instance) => {
+        const who = instance.owner ? instance.owner.displayName + ' (' + instance.owner.email + ')' : instance.name;
+
+        if (!window.confirm(
+            'Stop the desktop belonging to ' + who + '?\n\n' +
+            'Anything unsaved in it is lost. They can start a replacement from their own page straight away.'
+        )) return;
+
+        this.setState(prev => ({
+            killing: Object.assign({}, prev.killing, { [instance.dockerId]: true }),
+            killError: null
+        }));
+
+        const done = () => this.setState(prev => {
+            const killing = Object.assign({}, prev.killing);
+            delete killing[instance.dockerId];
+            return { killing };
+        });
+
+        fetchJson('/service/terminate-instance/' + instance.dockerId, { method: 'POST' })
+            // No refetch: the stats stream drops it from the next tick by
+            // itself, which is also how it disappears when someone else acts.
+            .then(done)
+            .catch(error => {
+                this.setState({ killError: error.message });
+                done();
+            });
+    };
 
     componentWillUnmount() {
         if (this.interval) {
@@ -132,7 +171,7 @@ class SystemHealth extends React.Component {
     }
 
     render() {
-        const { healthData, isLoading, error, lastUpdated, liveStats } = this.state;
+        const { healthData, isLoading, error, lastUpdated, liveStats, killing, killError } = this.state;
 
         if (isLoading) {
             return (
@@ -205,19 +244,38 @@ class SystemHealth extends React.Component {
                         )}
 
                         <h5 className="server-load-subtitle">Desktops</h5>
+                        {killError && <div className="image-warning">{killError}</div>}
                         {liveStats.instances.length === 0 ? (
                             <p className="text-muted">No desktops are running.</p>
                         ) : (
                             <table className="table table-sm instance-load-table">
                                 <thead>
-                                    <tr><th>Instance</th><th>CPU</th><th>Memory</th></tr>
+                                    <tr><th>Instance</th><th>Owner</th><th>CPU</th><th>Memory</th><th></th></tr>
                                 </thead>
                                 <tbody>
                                     {liveStats.instances.map(instance => (
                                         <tr key={instance.name}>
                                             <td className="instance-load-name">{instance.name}</td>
+                                            <td>
+                                                {instance.owner ? (
+                                                    <span>
+                                                        {instance.owner.displayName}
+                                                        <span className="instance-load-email">{instance.owner.email}</span>
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-muted">unknown</span>
+                                                )}
+                                            </td>
                                             <td>{instance.cpuPercent === null ? '-' : instance.cpuPercent + '%'}</td>
                                             <td>{this.formatBytes(instance.memoryBytes)}</td>
+                                            <td>
+                                                <button type="button"
+                                                    className="btn btn-sm btn-outline-danger"
+                                                    disabled={killing[instance.dockerId]}
+                                                    onClick={() => this.killInstance(instance)}>
+                                                    {killing[instance.dockerId] ? 'Stopping...' : 'Kill'}
+                                                </button>
+                                            </td>
                                         </tr>
                                     ))}
                                 </tbody>

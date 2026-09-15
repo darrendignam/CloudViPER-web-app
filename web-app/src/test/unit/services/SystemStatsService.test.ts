@@ -23,6 +23,7 @@ jest.mock('../../../models', () => ({
     sequelize: { query: jest.fn() }
 }));
 
+import db from '../../../models';
 import systemStatsService, { cpuPercentFromSample } from '../../../services/SystemStatsService';
 import { CLOUDVIPER_INSTANCE_LABEL } from '../../../services/ViperInstanceService';
 
@@ -201,5 +202,110 @@ describe('instanceStats', () => {
         mockContainerService.listContainers.mockRejectedValue(new Error('daemon down'));
 
         await expect(systemStatsService.instanceStats(2)).resolves.toEqual([]);
+    });
+});
+
+describe('who each desktop belongs to', () => {
+    /**
+     * A runaway desktop is a person having a bad time, and the container name
+     * does not say which person. An administrator with a room in front of them
+     * needs to match "my ViPER has gone mad" to a row without cross-referencing
+     * anything.
+     */
+    const mockDb = db as unknown as { ViperInstance: { findAll: jest.Mock } };
+
+    function container(id: string, uuid: string) {
+        return { Id: id, Names: ['/viper-cloud-' + uuid], Labels: { [CLOUDVIPER_INSTANCE_LABEL]: uuid } };
+    }
+
+    function row(uuid: string, owner: any) {
+        return { uuid, ownerUser: owner };
+    }
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockContainerService.containerStats.mockResolvedValue(sample());
+    });
+
+    it('should name the person and their email', async () => {
+        mockContainerService.listContainers.mockResolvedValue([container('abc', 'inst1')]);
+        mockDb.ViperInstance.findAll.mockResolvedValue([
+            row('inst1', { id: 7, username: 'jsmith', email: 'john@example.org', firstName: 'John', lastName: 'Smith' })
+        ]);
+
+        const stats = await systemStatsService.instanceStats(2);
+
+        expect(stats[0].owner).toEqual({
+            id: 7, username: 'jsmith', email: 'john@example.org', displayName: 'John Smith'
+        });
+    });
+
+    it('should fall back to the username when no name is recorded', async () => {
+        mockContainerService.listContainers.mockResolvedValue([container('abc', 'inst1')]);
+        mockDb.ViperInstance.findAll.mockResolvedValue([
+            row('inst1', { id: 3, username: 'workshop7', email: 'w7@x.org', firstName: null, lastName: null })
+        ]);
+
+        const stats = await systemStatsService.instanceStats(2);
+
+        expect(stats[0].owner!.displayName).toBe('workshop7');
+    });
+
+    it('should carry the docker id, so the panel can act on what it shows', async () => {
+        mockContainerService.listContainers.mockResolvedValue([container('deadbeef', 'inst1')]);
+        mockDb.ViperInstance.findAll.mockResolvedValue([]);
+
+        const stats = await systemStatsService.instanceStats(2);
+
+        expect(stats[0].dockerId).toBe('deadbeef');
+    });
+
+    it('should ask the database once for the whole list, not once per desktop', async () => {
+        // This runs on the stats interval for every open dashboard, so a query
+        // per container multiplies by both.
+        mockContainerService.listContainers.mockResolvedValue([
+            container('a', 'one'), container('b', 'two'), container('c', 'three')
+        ]);
+        mockDb.ViperInstance.findAll.mockResolvedValue([]);
+
+        await systemStatsService.instanceStats(2);
+
+        expect(mockDb.ViperInstance.findAll).toHaveBeenCalledTimes(1);
+        // The call count alone would pass a query that asked about one desktop
+        // and left the rest unnamed, so assert it asked about all of them.
+        expect(mockDb.ViperInstance.findAll).toHaveBeenCalledWith(
+            expect.objectContaining({ where: { uuid: ['one', 'two', 'three'] } })
+        );
+    });
+
+    it('should leave the owner null for a container with no row', async () => {
+        // Real for a few seconds either side of creation and teardown.
+        mockContainerService.listContainers.mockResolvedValue([container('abc', 'orphan')]);
+        mockDb.ViperInstance.findAll.mockResolvedValue([]);
+
+        const stats = await systemStatsService.instanceStats(2);
+
+        expect(stats[0].owner).toBeNull();
+    });
+
+    it('should still report the figures when the owner lookup fails', async () => {
+        // The numbers are the point of the panel. Losing the names is worse
+        // than losing nothing, but far better than losing the load reading.
+        mockContainerService.listContainers.mockResolvedValue([container('abc', 'inst1')]);
+        mockDb.ViperInstance.findAll.mockRejectedValue(new Error('database is away'));
+
+        const stats = await systemStatsService.instanceStats(2);
+
+        expect(stats).toHaveLength(1);
+        expect(stats[0].cpuPercent).toBe(100);
+        expect(stats[0].owner).toBeNull();
+    });
+
+    it('should not query at all when nothing is running', async () => {
+        mockContainerService.listContainers.mockResolvedValue([]);
+
+        await systemStatsService.instanceStats(2);
+
+        expect(mockDb.ViperInstance.findAll).not.toHaveBeenCalled();
     });
 });

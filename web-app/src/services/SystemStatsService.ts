@@ -32,9 +32,19 @@ export interface HostStats {
 export interface InstanceStats {
     name: string;
     uuid: string | null;
+    /** What a termination request needs, so the panel can act on what it shows. */
+    dockerId: string;
     cpuPercent: number | null;
     memoryBytes: number | null;
     memoryPercent: number | null;
+    /**
+     * Who to go and talk to.
+     *
+     * A runaway desktop is a person having a bad time, and "viper-cloud-xpi04"
+     * does not tell an administrator which person. Null when the container has
+     * no row, which happens for a few seconds around creation and teardown.
+     */
+    owner: { id: number; username: string; email: string; displayName: string } | null;
 }
 
 export interface SystemStats {
@@ -205,20 +215,94 @@ export class SystemStatsService {
                 return {
                     name,
                     uuid,
+                    dockerId: container.Id,
                     cpuPercent: cpuPercentFromSample(sample, cpuCount),
                     memoryBytes,
                     memoryPercent: memoryBytes && memoryLimit
                         ? Number(((memoryBytes / memoryLimit) * 100).toFixed(1))
-                        : null
+                        : null,
+                    owner: null
                 };
             } catch {
                 // A container that stopped between listing and sampling is
                 // ordinary, not an error worth reporting as one.
-                return { name, uuid, cpuPercent: null, memoryBytes: null, memoryPercent: null };
+                return {
+                    name, uuid, dockerId: container.Id,
+                    cpuPercent: null, memoryBytes: null, memoryPercent: null, owner: null
+                };
             }
         }));
 
-        return samples.sort((a, b) => (b.memoryBytes ?? 0) - (a.memoryBytes ?? 0));
+        const withOwners = await this.attachOwners(samples);
+
+        return withOwners.sort((a, b) => (b.memoryBytes ?? 0) - (a.memoryBytes ?? 0));
+    }
+
+    /**
+     * Put a person against each running desktop.
+     *
+     * One query for the whole list rather than one per desktop: this runs on the
+     * stats interval with every dashboard open, so a query per container would
+     * multiply by both.
+     */
+    private async attachOwners(samples: InstanceStats[]): Promise<InstanceStats[]> {
+        const uuids = samples.map((sample) => sample.uuid).filter((uuid): uuid is string => Boolean(uuid));
+
+        if (uuids.length === 0) {
+            return samples;
+        }
+
+        let rows: any[] = [];
+
+        try {
+            rows = await db.ViperInstance.findAll({
+                where: { uuid: uuids },
+                attributes: ['uuid'],
+                include: [{
+                    model: db.User,
+                    as: 'ownerUser',
+                    attributes: ['id', 'username', 'email', 'firstName', 'lastName']
+                }]
+            });
+        } catch (error) {
+            // The figures are still useful without a name against them, so this
+            // degrades rather than failing the whole stats tick.
+            appLogger.warn('Could not attach owners to instance stats', {
+                eventType: 'Instance Stats Owner Lookup Failed',
+                error: (error as Error).message,
+                timestamp: new Date().toISOString()
+            });
+            return samples;
+        }
+
+        const byUuid = new Map<string, any>();
+
+        // Guarded rather than trusted: this runs on a timer behind every open
+        // dashboard, so anything unexpected here would break the load reading
+        // for everyone, which is the one part of the panel that must not fail.
+        for (const row of Array.isArray(rows) ? rows : []) {
+            if (row.ownerUser) byUuid.set(row.uuid, row.ownerUser);
+        }
+
+        return samples.map((sample) => {
+            const person = sample.uuid ? byUuid.get(sample.uuid) : null;
+
+            if (!person) return sample;
+
+            const fullName = [person.firstName, person.lastName].filter(Boolean).join(' ').trim();
+
+            return {
+                ...sample,
+                owner: {
+                    id: person.id,
+                    username: person.username,
+                    email: person.email,
+                    // The name if there is one, the username if not: something a
+                    // human can match to the person who just put their hand up.
+                    displayName: fullName || person.username
+                }
+            };
+        });
     }
 
     async collect(): Promise<SystemStats> {

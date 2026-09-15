@@ -1847,3 +1847,11 @@ input.form-control:focus {
 @media (max-width: 576px) {
   .launch-advanced-row { grid-template-columns: 1fr; gap: 0.25rem; }
 }
+
+/* Owner against each desktop in the live load table (2.1) */
+.instance-load-email {
+  display: block;
+  font-size: 0.72rem;
+  font-family: monospace;
+  color: #6c757d;
+}
