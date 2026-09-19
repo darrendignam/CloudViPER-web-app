@@ -222,85 +222,6 @@ class SystemHealth extends React.Component {
                     </button>
                 </div>
 
-                {host && (
-                    <div className="server-load">
-                        <h4 className="server-load-title">
-                            <i className="fas fa-server"></i> Server load
-                            <span className="server-load-live">live</span>
-                        </h4>
-
-                        <div className="server-load-meters">
-                            {this.renderMeter(
-                                'CPU load',
-                                host.loadPercent,
-                                host.loadAverage && host.loadAverage.length
-                                    ? 'load ' + host.loadAverage.join(', ') + ' across ' + host.cpuCount + ' cores'
-                                    : null
-                            )}
-
-                            {host.memory && this.renderMeter(
-                                'Memory',
-                                host.memory.usedPercent,
-                                this.formatBytes(host.memory.usedBytes) + ' of ' +
-                                this.formatBytes(host.memory.totalBytes) + ' used, ' +
-                                this.formatBytes(host.memory.availableBytes) + ' available'
-                            )}
-
-                            {host.disk && this.renderMeter(
-                                'Disk',
-                                host.disk.usedPercent,
-                                this.formatBytes(host.disk.freeBytes) + ' free of ' +
-                                this.formatBytes(host.disk.totalBytes) +
-                                '. A ViPER image is around 10 GB.'
-                            )}
-                        </div>
-
-                        {host.containers && (
-                            <p className="server-load-containers">
-                                {host.containers.running} of {host.containers.total} containers running
-                            </p>
-                        )}
-
-                        <h5 className="server-load-subtitle">Desktops</h5>
-                        {killError && <div className="image-warning">{killError}</div>}
-                        {liveStats.instances.length === 0 ? (
-                            <p className="text-muted">No desktops are running.</p>
-                        ) : (
-                            <table className="table table-sm instance-load-table">
-                                <thead>
-                                    <tr><th>Instance</th><th>Owner</th><th>CPU</th><th>Memory</th><th></th></tr>
-                                </thead>
-                                <tbody>
-                                    {liveStats.instances.map(instance => (
-                                        <tr key={instance.name}>
-                                            <td className="instance-load-name">{instance.name}</td>
-                                            <td>
-                                                {instance.owner ? (
-                                                    <span>
-                                                        {instance.owner.displayName}
-                                                        <span className="instance-load-email">{instance.owner.email}</span>
-                                                    </span>
-                                                ) : (
-                                                    <span className="text-muted">unknown</span>
-                                                )}
-                                            </td>
-                                            <td>{instance.cpuPercent === null ? '-' : instance.cpuPercent + '%'}</td>
-                                            <td>{this.formatBytes(instance.memoryBytes)}</td>
-                                            <td>
-                                                <button type="button"
-                                                    className="btn btn-sm btn-outline-danger"
-                                                    disabled={killing[instance.dockerId]}
-                                                    onClick={() => this.killInstance(instance)}>
-                                                    {killing[instance.dockerId] ? 'Terminating...' : 'Terminate'}
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        )}
-                    </div>
-                )}
 
 
                 <div className="health-cards">
@@ -422,6 +343,86 @@ class SystemHealth extends React.Component {
                         </div>
                     )}
                 </div>
+
+                {host && (
+                    <div className="server-load">
+                        <h4 className="server-load-title">
+                            <i className="fas fa-server"></i> Server load
+                            <span className="server-load-live">live</span>
+                        </h4>
+
+                        <div className="server-load-meters">
+                            {this.renderMeter(
+                                'CPU load',
+                                host.loadPercent,
+                                host.loadAverage && host.loadAverage.length
+                                    ? 'load ' + host.loadAverage.join(', ') + ' across ' + host.cpuCount + ' cores'
+                                    : null
+                            )}
+
+                            {host.memory && this.renderMeter(
+                                'Memory',
+                                host.memory.usedPercent,
+                                this.formatBytes(host.memory.usedBytes) + ' of ' +
+                                this.formatBytes(host.memory.totalBytes) + ' used, ' +
+                                this.formatBytes(host.memory.availableBytes) + ' available'
+                            )}
+
+                            {host.disk && this.renderMeter(
+                                'Disk',
+                                host.disk.usedPercent,
+                                this.formatBytes(host.disk.freeBytes) + ' free of ' +
+                                this.formatBytes(host.disk.totalBytes) +
+                                '. A ViPER image is around 10 GB.'
+                            )}
+                        </div>
+
+                        {host.containers && (
+                            <p className="server-load-containers">
+                                {host.containers.running} of {host.containers.total} containers running
+                            </p>
+                        )}
+
+                        <h5 className="server-load-subtitle">Desktops</h5>
+                        {killError && <div className="image-warning">{killError}</div>}
+                        {liveStats.instances.length === 0 ? (
+                            <p className="text-muted">No desktops are running.</p>
+                        ) : (
+                            <table className="table table-sm instance-load-table">
+                                <thead>
+                                    <tr><th>Instance</th><th>Owner</th><th>CPU</th><th>Memory</th><th></th></tr>
+                                </thead>
+                                <tbody>
+                                    {liveStats.instances.map(instance => (
+                                        <tr key={instance.name}>
+                                            <td className="instance-load-name">{instance.name}</td>
+                                            <td>
+                                                {instance.owner ? (
+                                                    <span>
+                                                        {instance.owner.displayName}
+                                                        <span className="instance-load-email">{instance.owner.email}</span>
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-muted">unknown</span>
+                                                )}
+                                            </td>
+                                            <td>{instance.cpuPercent === null ? '-' : instance.cpuPercent + '%'}</td>
+                                            <td>{this.formatBytes(instance.memoryBytes)}</td>
+                                            <td>
+                                                <button type="button"
+                                                    className="btn btn-sm btn-outline-danger"
+                                                    disabled={killing[instance.dockerId]}
+                                                    onClick={() => this.killInstance(instance)}>
+                                                    {killing[instance.dockerId] ? 'Terminating...' : 'Terminate'}
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+                    </div>
+                )}
             </div>
         );
     }
