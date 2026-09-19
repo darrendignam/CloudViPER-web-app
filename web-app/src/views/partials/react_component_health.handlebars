@@ -76,7 +76,7 @@ class SystemHealth extends React.Component {
         const who = instance.owner ? instance.owner.displayName + ' (' + instance.owner.email + ')' : instance.name;
 
         if (!window.confirm(
-            'Stop the desktop belonging to ' + who + '?\n\n' +
+            'Terminate the desktop belonging to ' + who + '?\n\n' +
             'Anything unsaved in it is lost. They can start a replacement from their own page straight away.'
         )) return;
 
@@ -204,6 +204,24 @@ class SystemHealth extends React.Component {
 
         return (
             <div className="health-monitor">
+                <div className="health-header">
+                    <div className="health-status">
+                        <i className={statusInfo.icon + ' health-status-icon'} 
+                           data-color={statusInfo.color}></i>
+                        <div className="status-info">
+                            <h3 className="system-status-title" data-color={statusInfo.color}>
+                                System {healthData.status}
+                            </h3>
+                            <p className="text-muted">
+                                Last updated: {lastUpdated ? lastUpdated.toLocaleString() : 'Unknown'}
+                            </p>
+                        </div>
+                    </div>
+                    <button className="btn btn-outline-primary" onClick={this.fetchHealthData}>
+                        <i className="fas fa-sync-alt"></i> Refresh
+                    </button>
+                </div>
+
                 {host && (
                     <div className="server-load">
                         <h4 className="server-load-title">
@@ -273,7 +291,7 @@ class SystemHealth extends React.Component {
                                                     className="btn btn-sm btn-outline-danger"
                                                     disabled={killing[instance.dockerId]}
                                                     onClick={() => this.killInstance(instance)}>
-                                                    {killing[instance.dockerId] ? 'Stopping...' : 'Kill'}
+                                                    {killing[instance.dockerId] ? 'Terminating...' : 'Terminate'}
                                                 </button>
                                             </td>
                                         </tr>
@@ -284,23 +302,6 @@ class SystemHealth extends React.Component {
                     </div>
                 )}
 
-                <div className="health-header">
-                    <div className="health-status">
-                        <i className={statusInfo.icon + ' health-status-icon'} 
-                           data-color={statusInfo.color}></i>
-                        <div className="status-info">
-                            <h3 className="system-status-title" data-color={statusInfo.color}>
-                                System {healthData.status}
-                            </h3>
-                            <p className="text-muted">
-                                Last updated: {lastUpdated ? lastUpdated.toLocaleString() : 'Unknown'}
-                            </p>
-                        </div>
-                    </div>
-                    <button className="btn btn-outline-primary" onClick={this.fetchHealthData}>
-                        <i className="fas fa-sync-alt"></i> Refresh
-                    </button>
-                </div>
 
                 <div className="health-cards">
                     {/* System Info Card */}
