@@ -1611,10 +1611,19 @@ Current Activity Score: ${data.summary.currentScore || 0}`);
                                     <i className="fas fa-layer-group"></i> Save as Image
                                   </button>
                                 )}
+                                {/*
+                                  Workshop hack, 2026-09-19. Removing an instance
+                                  permanently blocks a member from launching another,
+                                  because a terminated row still counts against their
+                                  limit (issue #2). Until that is fixed, a participant
+                                  cannot be allowed to do it to themselves mid-session.
+                                  Admins keep the button: they can clear the stale row.
+                                */}
                                 <button 
-                                  className={'btn btn-danger ' + (instance.status === 'deleted' ? 'disabled' : '')} 
+                                  className={'btn btn-danger ' + (instance.status === 'deleted' || !this.isAdmin() ? 'disabled' : '')} 
+                                  title={!this.isAdmin() ? 'Ask a workshop organiser if you need your desktop restarted' : ''}
                                   onClick={() => this.removeInstance(instance.dockerid)} 
-                                  disabled={instance.status === 'deleted' || !!removing[instance.dockerid]}
+                                  disabled={!this.isAdmin() || instance.status === 'deleted' || !!removing[instance.dockerid]}
                                 >
                                   {removing[instance.dockerid]
                                     ? <span><i className="fas fa-spinner fa-spin"></i> Removing...</span>
