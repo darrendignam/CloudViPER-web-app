@@ -70,7 +70,7 @@ body {
     background-attachment: scroll;
     background-repeat: no-repeat;
     background-size: cover;
-    background-image: url('https://staging.openpreservation.org/wp-content/uploads/2019/11/Homepage-bg.jpg');
+    background-image: url('/images/Homepage-bg.jpg');
 }
 
 .top-opf-bar .top-bar-logo {
